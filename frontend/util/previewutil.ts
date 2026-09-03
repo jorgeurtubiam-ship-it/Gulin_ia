@@ -41,6 +41,34 @@ export function addOpenMenuItems(menu: ContextMenuItem[], conn: string, finfo: F
         type: "separator",
     });
     if (!finfo.isdir) {
+        const lowerName = (finfo.name || finfo.path || "").toLowerCase();
+        const isWebFile =
+            lowerName.endsWith(".html") ||
+            lowerName.endsWith(".htm") ||
+            lowerName.endsWith(".xhtml") ||
+            lowerName.endsWith(".svg") ||
+            lowerName.endsWith(".xml") ||
+            lowerName.endsWith(".mhtml");
+
+        if (isWebFile) {
+            menu.push({
+                label: "Open in Web Browser",
+                click: () =>
+                    fireAndForget(async () => {
+                        const normalizedPath = finfo.path.replace(/\\/g, "/");
+                        const fileUrl = normalizedPath.startsWith("/") ? `file://${normalizedPath}` : `file:///${normalizedPath}`;
+                        const blockDef: BlockDef = {
+                            meta: {
+                                view: "web",
+                                url: fileUrl,
+                                connection: conn,
+                            },
+                        };
+                        await createBlock(blockDef);
+                    }),
+            });
+        }
+
         menu.push({
             label: "Open Preview in New Block",
             click: () =>

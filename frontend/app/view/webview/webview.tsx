@@ -136,6 +136,12 @@ export class WebViewModel implements ViewModel {
                 click: this.handleHome.bind(this),
                 disabled: this.shouldDisableHomeButton(),
             });
+            rtn.push({
+                elemtype: "iconbutton",
+                icon: "folder-open",
+                title: "Abrir archivo HTML local",
+                click: () => fireAndForget(this.handleOpenLocalFile.bind(this)),
+            });
             const divChildren: HeaderElem[] = [];
             divChildren.push({
                 elemtype: "input",
@@ -375,30 +381,101 @@ export class WebViewModel implements ViewModel {
         }
     }
 
+    async handleOpenLocalFile() {
+        try {
+            const filePath = await getApi().openFileDialog({
+                title: "Abrir archivo HTML o Web",
+                filters: [
+                    { name: "Archivos HTML & Web", extensions: ["html", "htm", "xhtml", "svg", "xml", "mhtml"] },
+                    { name: "Todos los archivos", extensions: ["*"] },
+                ],
+            });
+            if (filePath) {
+                const normalizedPath = filePath.replace(/\\/g, "/");
+                const fileUrl = normalizedPath.startsWith("/") ? `file://${normalizedPath}` : `file:///${normalizedPath}`;
+                this.loadUrl(fileUrl, "file-dialog");
+            }
+        } catch (e) {
+            console.error("Error opening local file:", e);
+        }
+    }
+
     ensureUrlScheme(url: string, searchTemplate: string) {
         if (url == null) {
             url = "";
         }
-
-        if (/^(http|https|file):/.test(url)) {
-            // If the URL starts with http: or https:, return it as is
+        url = url.trim();
+        if (url === "") {
             return url;
         }
 
-        // Check if the URL looks like a local URL
-        const isLocal = /^(localhost|(\d{1,3}\.){3}\d{1,3})(:\d+)?$/.test(url.split("/")[0]);
+        // 1. File protocol: file:///path or file://path
+        if (/^file:\/\//i.test(url)) {
+            return url;
+        }
 
+        // 2. HTTP / HTTPS protocol
+        if (/^(https?):\/\//i.test(url)) {
+            return url;
+        }
+
+        // 3. Data / about / blob URLs
+        if (/^(data|about|blob):/i.test(url)) {
+            return url;
+        }
+
+        // 4. Handle home directory path (~/... or ~)
+        if (url.startsWith("~/") || url === "~") {
+            try {
+                const homeDir = getApi().getHomeDir();
+                if (homeDir) {
+                    const resolved = url === "~" ? homeDir : `${homeDir}/${url.slice(2)}`;
+                    return `file://${resolved.replace(/\\/g, "/")}`;
+                }
+            } catch (_) {}
+        }
+
+        // 5. Absolute Unix path (/Users/..., /home/..., /tmp/..., etc.)
+        if (url.startsWith("/")) {
+            return `file://${url}`;
+        }
+
+        // 6. Windows absolute path (C:\..., D:/...)
+        if (/^[a-zA-Z]:[\\/]/.test(url)) {
+            const normalized = url.replace(/\\/g, "/");
+            return `file:///${normalized}`;
+        }
+
+        // 7. Relative file path (./..., ../..., .\..., ..\...)
+        if (url.startsWith("./") || url.startsWith("../") || url.startsWith(".\\") || url.startsWith("..\\")) {
+            const cleanPath = url.replace(/\\/g, "/");
+            return `file://${cleanPath}`;
+        }
+
+        // 8. Direct HTML/Web file extensions (e.g. index.html, test.htm, app.svg, report.xhtml)
+        const webExtRegex = /\.(html|htm|xhtml|svg|xml|mhtml|pdf)$/i;
+        if (webExtRegex.test(url) && !url.includes("://")) {
+            if (!url.includes("/") && !url.includes("\\")) {
+                return `file://${url}`;
+            }
+        }
+
+        // 9. Localhost / IP address check
+        const isLocal = /^(localhost|(\d{1,3}\.){3}\d{1,3})(:\d+)?(\/.*)?$/i.test(url);
         if (isLocal) {
-            // If it is a local URL, ensure it has http:// scheme
             return `http://${url}`;
         }
 
-        // Check if the URL looks like a domain
-        const domainRegex = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
-        const isDomain = domainRegex.test(url.split("/")[0]);
+        // 10. Check if the URL looks like a domain (excluding common file extensions like .html, .htm)
+        const domainRegex = /^[a-z0-9.-]+\.(com|org|net|edu|gov|io|ai|dev|app|co|uk|de|fr|es|me|info|biz|tv|cc|xyz|ca|au|jp|cn|us|lat|online|site|tech|cloud|store|shop|blog|design|wiki|[a-z]{2,8})(\/.*)?$/i;
+        const isDomain = domainRegex.test(url.split("?")[0].split("#")[0]);
 
-        if (isDomain) {
-            // If it looks like a domain, ensure it has https:// scheme
+        if (isDomain && !webExtRegex.test(url)) {
+            return `https://${url}`;
+        }
+
+        // If it starts with www., ensure https://
+        if (/^www\.[a-z0-9.-]+/i.test(url)) {
             return `https://${url}`;
         }
 
@@ -562,6 +639,10 @@ export class WebViewModel implements ViewModel {
             return true;
         }
         if (checkKeyPressed(e, "Cmd:o")) {
+            fireAndForget(this.handleOpenLocalFile.bind(this));
+            return true;
+        }
+        if (checkKeyPressed(e, "Cmd:Shift:o") || checkKeyPressed(e, "Cmd:b")) {
             const curVal = globalStore.get(this.typeaheadOpen);
             globalStore.set(this.typeaheadOpen, !curVal);
             return true;
@@ -669,6 +750,10 @@ export class WebViewModel implements ViewModel {
 
         const isNavHidden = globalStore.get(this.hideNav);
         return [
+            {
+                label: "Abrir archivo HTML local...",
+                click: () => fireAndForget(this.handleOpenLocalFile.bind(this)),
+            },
             {
                 label: "Copy URL to Clipboard",
                 click: () => this.copyUrlToClipboard(),
@@ -1055,30 +1140,50 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
         };
     }, []);
 
-    return (
-        <Fragment>
-            <webview
-                id="webview"
-                className="webview"
-                ref={model.webviewRef}
-                src={metaUrlInitial}
-                data-blockid={model.blockId}
-                data-webcontentsid={webContentsId} // needed for emain
-                preload={getWebviewPreloadUrl()}
-                // @ts-expect-error This is a discrepancy between the React typing and the Chromium impl for webviewTag. Chrome webviewTag expects a string, while React expects a boolean.
-                allowpopups="true"
-                partition={webPartition}
-                useragent={userAgent}
-            />
-            {errorText && (
-                <div className="webview-error">
-                    <div>{errorText}</div>
-                </div>
-            )}
-            <Search {...searchProps} />
-            <BookmarkTypeahead model={model} blockRef={blockRef} />
-        </Fragment>
-    );
+        const handleDragOver = (e: React.DragEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+
+        const handleDrop = (e: React.DragEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                const file = e.dataTransfer.files[0];
+                // @ts-expect-error Electron File object has 'path' property
+                const filePath = file.path || file.name;
+                if (filePath) {
+                    const normalizedPath = filePath.replace(/\\/g, "/");
+                    const fileUrl = normalizedPath.startsWith("/") ? `file://${normalizedPath}` : `file:///${normalizedPath}`;
+                    model.loadUrl(fileUrl, "drag-drop");
+                }
+            }
+        };
+
+        return (
+            <div className="webview-container relative h-full w-full" onDragOver={handleDragOver} onDrop={handleDrop}>
+                <webview
+                    id="webview"
+                    className="webview"
+                    ref={model.webviewRef}
+                    src={metaUrlInitial}
+                    data-blockid={model.blockId}
+                    data-webcontentsid={webContentsId} // needed for emain
+                    preload={getWebviewPreloadUrl()}
+                    // @ts-expect-error This is a discrepancy between the React typing and the Chromium impl for webviewTag. Chrome webviewTag expects a string, while React expects a boolean.
+                    allowpopups="true"
+                    partition={webPartition}
+                    useragent={userAgent}
+                />
+                {errorText && (
+                    <div className="webview-error">
+                        <div>{errorText}</div>
+                    </div>
+                )}
+                <Search {...searchProps} />
+                <BookmarkTypeahead model={model} blockRef={blockRef} />
+            </div>
+        );
 });
 
 export { WebView };

@@ -4,7 +4,7 @@
 import { CopyButton } from "@/app/element/copybutton";
 import { IconButton } from "@/app/element/iconbutton";
 import { cn, useAtomValueSafe, stringToBase64 } from "@/util/util";
-import { getFocusedBlockId, getAllBlockComponentModels, getBlockComponentModel, refocusNode } from "@/app/store/global";
+import { getFocusedBlockId, getAllBlockComponentModels, getBlockComponentModel, refocusNode, openLink, getApi, createBlock } from "@/app/store/global";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
 import { RpcApi } from "@/app/store/wshclientapi";
 import type { Atom } from "jotai";
@@ -32,9 +32,173 @@ function extractText(node: React.ReactNode): string {
     return "";
 }
 
+const KNOWN_FILE_EXTENSIONS = new Set([
+    "html", "htm", "json", "csv", "tsv", "log", "txt", "md", "markdown",
+    "pdf", "png", "jpg", "jpeg", "gif", "svg", "webp", "ico",
+    "sql", "sh", "bash", "zsh", "py", "ts", "tsx", "js", "jsx", "go", "rs",
+    "yaml", "yml", "xml", "css", "scss", "env", "toml", "ini", "conf", "proto",
+    "tar", "gz", "zip", "rar", "7z", "doc", "docx", "xls", "xlsx", "ppt", "pptx"
+]);
+
+function getFileIconByPath(path: string): string {
+    const lower = path.toLowerCase();
+    if (lower.endsWith(".html") || lower.endsWith(".htm")) return "fa-solid fa-file-code text-teal-400";
+    if (lower.endsWith(".pdf")) return "fa-solid fa-file-pdf text-rose-400";
+    if (lower.endsWith(".json") || lower.endsWith(".yaml") || lower.endsWith(".yml") || lower.endsWith(".xml") || lower.endsWith(".toml")) return "fa-solid fa-file-lines text-amber-400";
+    if (lower.endsWith(".csv") || lower.endsWith(".tsv") || lower.endsWith(".xlsx") || lower.endsWith(".xls")) return "fa-solid fa-file-csv text-emerald-400";
+    if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif") || lower.endsWith(".svg") || lower.endsWith(".webp")) return "fa-solid fa-file-image text-purple-400";
+    if (lower.endsWith(".sh") || lower.endsWith(".bash") || lower.endsWith(".zsh") || lower.endsWith(".py") || lower.endsWith(".ts") || lower.endsWith(".js") || lower.endsWith(".go") || lower.endsWith(".rs") || lower.endsWith(".sql")) return "fa-solid fa-file-code text-green-400";
+    if (lower.endsWith(".log") || lower.endsWith(".txt") || lower.endsWith(".md")) return "fa-solid fa-file-lines text-zinc-300";
+    if (lower.endsWith(".zip") || lower.endsWith(".tar") || lower.endsWith(".gz") || lower.endsWith(".rar") || lower.endsWith(".7z")) return "fa-solid fa-file-zipper text-yellow-400";
+    return "fa-solid fa-file text-teal-300";
+}
+
+function getPathOrUrlInfo(rawText: string): { isLink: boolean; type: "url" | "file" | "dir"; target: string; icon: string } | null {
+    if (!rawText) return null;
+    const text = rawText.trim();
+
+    if (text.includes("\n") || text.length > 500 || text.length < 2) return null;
+    if (/^--?[a-zA-Z0-9_-]+(=.*)?$/.test(text)) return null;
+
+    // Web URLs
+    if (/^https?:\/\/[^\s]+$/i.test(text)) {
+        return { isLink: true, type: "url", target: text, icon: "fa-solid fa-globe text-cyan-400" };
+    }
+
+    // File URIs
+    if (/^file:\/\/[^\s]+$/i.test(text)) {
+        const clean = decodeURIComponent(text.replace(/^file:\/\//, ""));
+        return { isLink: true, type: "file", target: clean, icon: getFileIconByPath(clean) };
+    }
+
+    // Absolute Unix paths or home paths (~/...)
+    const isAbsoluteUnix = text.startsWith("/") && !text.includes(" ") && text.length > 1;
+    const isHomePath = text.startsWith("~/") && text.length > 2;
+    const isWindowsPath = /^[a-zA-Z]:[\\/][^\s]+$/.test(text);
+
+    // Relative path with directory separator
+    const isRelativePath = /^(\.\/|\.\.\/|[a-zA-Z0-9_-]+\/)[^\s]+$/.test(text);
+
+    // Common file extensions
+    const fileExtMatch = text.match(/\.([a-zA-Z0-9]+)(?:[#?].*)?$/);
+    const hasKnownExt = fileExtMatch && KNOWN_FILE_EXTENSIONS.has(fileExtMatch[1].toLowerCase());
+
+    if (isAbsoluteUnix || isHomePath || isWindowsPath || isRelativePath || hasKnownExt) {
+        if (/^\d+\/\d+$/.test(text)) return null;
+        if (/^\/[^/]+\/[gimsuy]*$/.test(text)) return null;
+
+        const isDir = text.endsWith("/") || text.endsWith("\\");
+        return {
+            isLink: true,
+            type: isDir ? "dir" : "file",
+            target: text,
+            icon: isDir ? "fa-solid fa-folder text-amber-400" : getFileIconByPath(text),
+        };
+    }
+
+    return null;
+}
+
+export async function openPathInGulin(targetPath: string) {
+    if (!targetPath) return;
+    let cleanPath = targetPath.trim();
+    if (cleanPath.startsWith("file://")) {
+        cleanPath = decodeURIComponent(cleanPath.replace(/^file:\/\//, ""));
+    }
+
+    const lower = cleanPath.toLowerCase();
+    const isHtmlFile = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
+
+    if (isHtmlFile) {
+        // Los reportes y archivos HTML se abren directamente en el navegador del sistema
+        getApi().openNativePath(cleanPath);
+        return;
+    }
+
+    try {
+        const blockDef: BlockDef = {
+            meta: {
+                view: "preview",
+                file: cleanPath,
+                connection: "local",
+            },
+        };
+        await createBlock(blockDef, false, true);
+    } catch (e) {
+        console.error("Failed to open path in Gulin editor widget, falling back to native:", e);
+        getApi().openNativePath(cleanPath);
+    }
+}
+
+function ClickablePathBadge({
+    text,
+    info,
+    className = "",
+}: {
+    text: string;
+    info: { isLink: boolean; type: "url" | "file" | "dir"; target: string; icon: string };
+    className?: string;
+}) {
+    const [openedState, setOpenedState] = useState(false);
+
+    const lowerTarget = (info.target || "").toLowerCase();
+    const isHtmlFile =
+        info.type === "file" &&
+        (lowerTarget.endsWith(".html") ||
+            lowerTarget.endsWith(".htm") ||
+            lowerTarget.endsWith(".xhtml"));
+
+    const handleClick = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (info.type === "url") {
+            openLink(info.target);
+        } else {
+            openPathInGulin(info.target);
+        }
+
+        setOpenedState(true);
+        setTimeout(() => setOpenedState(false), 2000);
+    };
+
+    const tooltipTitle =
+        info.type === "url"
+            ? `Click para abrir enlace web: ${info.target}`
+            : isHtmlFile
+            ? `Click para abrir reporte HTML en el navegador: ${info.target}`
+            : info.type === "dir"
+            ? `Click para explorar carpeta en Gulin: ${info.target}`
+            : `Click para abrir en el editor de Gulin: ${info.target}`;
+
+    return (
+        <span
+            onClick={handleClick}
+            title={tooltipTitle}
+            className={cn(
+                "inline-flex items-center gap-1.5 font-mono text-[12px] rounded-md px-2 py-0.5 border transition-all duration-150 select-text cursor-pointer group/path align-baseline my-0.5 shadow-sm",
+                openedState
+                    ? "bg-emerald-950/80 border-emerald-500/80 text-emerald-300"
+                    : "bg-zinc-900/90 border-teal-500/40 hover:border-teal-400 text-teal-300 hover:text-teal-200 hover:bg-zinc-800/90 hover:shadow-teal-950/40 hover:shadow-md",
+                className
+            )}
+        >
+            <i className={cn("text-[11px] shrink-0 transition-transform group-hover/path:scale-110", openedState ? "fa-solid fa-check text-emerald-400" : info.icon)} />
+            <span className="underline decoration-teal-500/30 group-hover/path:decoration-teal-300 break-all">{text}</span>
+            <i className="fa-solid fa-arrow-up-right-from-square text-[9px] opacity-60 group-hover/path:opacity-100 transition-opacity ml-0.5" />
+        </span>
+    );
+}
+
 function CodePlain({ className = "", isCodeBlock, text }: { className?: string; isCodeBlock: boolean; text: string }) {
     if (isCodeBlock) {
         return <code className={cn("font-mono text-[12px]", className)}>{text}</code>;
+    }
+
+    const linkInfo = getPathOrUrlInfo(text);
+
+    if (linkInfo) {
+        return <ClickablePathBadge text={text} info={linkInfo} className={className} />;
     }
 
     return (
@@ -479,9 +643,36 @@ export const GulinStreamdown = ({
                 );
             },
             summary: () => null,
-            a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
-                <a {...props} className="text-green-400 hover:text-green-300 font-mono underline decoration-green-500/40 hover:decoration-green-300 transition-colors" />
-            ),
+            a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+                const href = props.href || "";
+                const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!href) return;
+                    if (href.startsWith("http://") || href.startsWith("https://")) {
+                        openLink(href);
+                    } else if (href.startsWith("file://")) {
+                        const clean = decodeURIComponent(href.replace(/^file:\/\//, ""));
+                        openPathInGulin(clean);
+                    } else if (href.startsWith("/") || href.startsWith("~") || /^[a-zA-Z]:[/\\]/.test(href)) {
+                        openPathInGulin(href);
+                    } else {
+                        openLink(href);
+                    }
+                };
+
+                return (
+                    <a
+                        {...props}
+                        onClick={handleClick}
+                        className="inline-flex items-center gap-1 text-teal-400 hover:text-teal-300 font-mono underline decoration-teal-500/40 hover:decoration-teal-300 transition-colors cursor-pointer"
+                        title={props.title || `Abrir en Gulin: ${href}`}
+                    >
+                        {props.children}
+                        <i className="fa-solid fa-arrow-up-right-from-square text-[9px] opacity-70" />
+                    </a>
+                );
+            },
             strong: (props: React.HTMLAttributes<HTMLElement>) => (
                 <strong {...props} className="font-bold text-zinc-100" />
             ),

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -22,7 +21,6 @@ import (
 	"github.com/gulindev/gulin/pkg/wshrpc/wshclient"
 	"github.com/gulindev/gulin/pkg/wshutil"
 	"github.com/gulindev/gulin/pkg/wstore"
-	"github.com/gulindev/gulin/pkg/util/shellutil"
 	"github.com/gulindev/gulin/pkg/util/utilfn"
 	"github.com/gulindev/gulin/pkg/web/sse"
 )
@@ -53,11 +51,11 @@ type TermGetScrollbackToolOutput struct {
 
 func parseTermGetScrollbackInput(ctx context.Context, input any) (*TermGetScrollbackToolInput, error) {
 	const (
-		DefaultCount          = 20
-		DefaultCountMini      = 10
-		DefaultCountBalanced  = 30
-		DefaultCountMax       = 100
-		MaxCount              = 1000
+		DefaultCount          = 50
+		DefaultCountMini      = 20
+		DefaultCountBalanced  = 100
+		DefaultCountMax       = 500
+		MaxCount              = 5000
 	)
 
 	result := &TermGetScrollbackToolInput{
@@ -130,8 +128,8 @@ func getTermScrollbackOutput(ctx context.Context, tabId string, widgetId string,
 	}
 
 	lines := result.Lines
-	if rpcData.LastCommand && len(lines) > 200 {
-		lines = lines[len(lines)-200:]
+	if rpcData.LastCommand && len(lines) > 2000 {
+		lines = lines[len(lines)-2000:]
 	}
 	content := strings.Join(lines, "\n")
 	content = utilfn.StripANSI(content)
@@ -468,9 +466,9 @@ func sanitizeAndValidateCommand(cmd string, block *gulinobj.Block) (string, erro
 		}
 	}
 
-	// 2. Validación de balanceo de comillas básicas para evitar prompt secundario (dquote> / quote>)
-	doubleQuotes := 0
-	singleQuotes := 0
+	// 2. Validación de balanceo de comillas
+	inDouble := false
+	inSingle := false
 	escaped := false
 	for i := 0; i < len(trimmed); i++ {
 		c := trimmed[i]
@@ -482,18 +480,18 @@ func sanitizeAndValidateCommand(cmd string, block *gulinobj.Block) (string, erro
 			escaped = true
 			continue
 		}
-		if c == '"' && singleQuotes%2 == 0 {
-			doubleQuotes++
-		} else if c == '\'' && doubleQuotes%2 == 0 {
-			singleQuotes++
+		if c == '"' && !inSingle {
+			inDouble = !inDouble
+		} else if c == '\'' && !inDouble {
+			inSingle = !inSingle
 		}
 	}
 
 	result := trimmed
 	// Auto-completar comilla faltante si quedó truncada al final
-	if doubleQuotes%2 != 0 {
+	if inDouble {
 		result += "\""
-	} else if singleQuotes%2 != 0 {
+	} else if inSingle {
 		result += "'"
 	}
 
@@ -565,8 +563,6 @@ func GetTermRunCommandToolDefinition(tabId string) uctypes.ToolDefinition {
 
 			rpcClient := wshclient.GetBareRpcClient()
 
-			blockORef := gulinobj.MakeORef(gulinobj.OType_Block, fullBlockId)
-			rtInfo := wstore.GetRTInfo(blockORef)
 			block, _ := wstore.DBGet[*gulinobj.Block](ctx, fullBlockId)
 
 			// AUTO-INTERCEPCIÓN: Si el comando es una señal o tecla de control (ej: 'ctrl+c', '^c', 'ctrl+z'), enviar el byte binario directo
@@ -596,27 +592,9 @@ func GetTermRunCommandToolDefinition(tabId string) uctypes.ToolDefinition {
 			decodedCmd := validatedCmd
 
 			cleanCmd := strings.TrimRight(decodedCmd, "\r\n")
-			terminator := "\r\n"
-			isPowerShell := false
-			if rtInfo != nil {
-				isPowerShell = (rtInfo.ShellType == "pwsh" || rtInfo.ShellType == "powershell" || rtInfo.ShellType == "cmd")
-			} else if block != nil {
-				shellPath := block.Meta.GetString(gulinobj.MetaKey_TermLocalShellPath, "")
-				if shellPath == "" {
-					shellPath = block.Meta.GetString(gulinobj.MetaKey_CmdShell, "")
-				}
-				if shellPath != "" {
-					st := shellutil.GetShellTypeFromShellPath(shellPath)
-					isPowerShell = (st == shellutil.ShellType_pwsh || st == shellutil.ShellType_cmd)
-				} else if runtime.GOOS == "windows" {
-					isPowerShell = (block.Meta.GetString(gulinobj.MetaKey_Connection, "") == "")
-				}
-			}
-
-			finalCmd := cleanCmd
-			if isPowerShell {
-				finalCmd = strings.ReplaceAll(finalCmd, "\n", "\r\n")
-			}
+			finalCmd := strings.ReplaceAll(cleanCmd, "\r\n", "\n")
+			finalCmd = strings.ReplaceAll(finalCmd, "\n", "\r")
+			terminator := "\r"
 			// AUTO-LIBERACIÓN: Si la terminal está bloqueada en un prompt secundario (ej: heredoc>, quote>, dquote>),
 			// enviar Ctrl+C (\x03) para liberar el prompt antes de escribir el nuevo comando
 			if lastOutput, err := getTermScrollbackOutput(ctx, tabId, parsed.WidgetId, wshrpc.CommandTermGetScrollbackLinesData{LineStart: 0, LineEnd: 5, LastCommand: false}); err == nil && lastOutput != nil {
@@ -762,27 +740,10 @@ func GetTermRunAndWaitToolDefinition(tabId string) uctypes.ToolDefinition {
 
 			// Build command with proper terminator
 			cleanCmd := strings.TrimRight(validatedCmd, "\r\n")
-			terminator := "\r\n"
-			isPowerShell := false
-			if rtInfo != nil {
-				isPowerShell = (rtInfo.ShellType == "pwsh" || rtInfo.ShellType == "powershell" || rtInfo.ShellType == "cmd")
-			} else if block != nil {
-				shellPath := block.Meta.GetString(gulinobj.MetaKey_TermLocalShellPath, "")
-				if shellPath == "" {
-					shellPath = block.Meta.GetString(gulinobj.MetaKey_CmdShell, "")
-				}
-				if shellPath != "" {
-					st := shellutil.GetShellTypeFromShellPath(shellPath)
-					isPowerShell = (st == shellutil.ShellType_pwsh || st == shellutil.ShellType_cmd)
-				} else if runtime.GOOS == "windows" {
-					isPowerShell = (block.Meta.GetString(gulinobj.MetaKey_Connection, "") == "")
-				}
-			}
+			finalCmd := strings.ReplaceAll(cleanCmd, "\r\n", "\n")
+			finalCmd = strings.ReplaceAll(finalCmd, "\n", "\r")
+			terminator := "\r"
 
-			finalCmd := cleanCmd
-			if isPowerShell {
-				finalCmd = strings.ReplaceAll(finalCmd, "\n", "\r\n")
-			}
 			// AUTO-LIBERACIÓN: Si la terminal está bloqueada en un prompt secundario (ej: heredoc>, quote>, dquote>),
 			// enviar Ctrl+C (\x03) para liberar el prompt antes de escribir el nuevo comando
 			if lastOutput, err := getTermScrollbackOutput(ctx, tabId, parsed.WidgetId, wshrpc.CommandTermGetScrollbackLinesData{LineStart: 0, LineEnd: 5, LastCommand: false}); err == nil && lastOutput != nil {
@@ -803,6 +764,12 @@ func GetTermRunAndWaitToolDefinition(tabId string) uctypes.ToolDefinition {
 
 			cmdWithTerminator := finalCmd + terminator
 			b64Data := base64.StdEncoding.EncodeToString([]byte(cmdWithTerminator))
+
+			initialCmd := ""
+			if rtInfo != nil {
+				initialCmd = rtInfo.ShellLastCmd
+			}
+			hasShellIntegration := rtInfo != nil && rtInfo.ShellIntegration
 
 			err = wshclient.ControllerInputCommand(
 				rpcClient,
@@ -836,116 +803,23 @@ func GetTermRunAndWaitToolDefinition(tabId string) uctypes.ToolDefinition {
 			}
 
 			deadline := time.Now().Add(time.Duration(maxWaitSec) * time.Second)
-			pollInterval := 100 * time.Millisecond
+			pollInterval := 80 * time.Millisecond
+			startTime := time.Now()
+			seenRunningState := false
+			minWaitDeadline := time.Now().Add(600 * time.Millisecond)
 
-			// Check if shell integration is active
-			hasShellIntegration := rtInfo != nil && rtInfo.ShellIntegration
-
-			if !hasShellIntegration {
-				// TERMINAL SIN SHELL INTEGRATION (ej. zsh estándar, ssh):
-				// Obtenemos el snapshot inicial del scrollback
-				initialOutput, _ := getTermScrollbackOutput(ctx, tabId, parsed.WidgetId, wshrpc.CommandTermGetScrollbackLinesData{LineStart: 0, LineEnd: 50, LastCommand: false})
-				initialContent := ""
-				if initialOutput != nil {
-					initialContent = initialOutput.Content
-				}
-
-				// Esperamos a que el comando ejecute y estabilice su salida
-				stabilizeDeadline := time.Now().Add(time.Duration(maxWaitSec) * time.Second)
-				lastSeenContent := initialContent
-				lastChangedTime := time.Now()
-				hasChanged := false
-				minWaitDeadline := time.Now().Add(1000 * time.Millisecond)
-
-				for time.Now().Before(stabilizeDeadline) {
-					if ctx.Err() != nil {
-						ctrlC := base64.StdEncoding.EncodeToString([]byte("\x03"))
-						_ = wshclient.ControllerInputCommand(
-							rpcClient,
-							wshrpc.CommandBlockInputData{
-								BlockId:     fullBlockId,
-								InputData64: ctrlC,
-							},
-							&wshrpc.RpcOpts{},
-						)
-						return map[string]any{
-							"status":  "cancelled",
-							"message": "command execution was cancelled by user",
-						}, nil
-					}
-
-					time.Sleep(pollInterval)
-					currentOutput, err := getTermScrollbackOutput(ctx, tabId, parsed.WidgetId, wshrpc.CommandTermGetScrollbackLinesData{LineStart: 0, LineEnd: 50, LastCommand: false})
-					if err == nil && currentOutput != nil {
-						if currentOutput.Content != lastSeenContent {
-							lastSeenContent = currentOutput.Content
-							lastChangedTime = time.Now()
-							hasChanged = true
-						} else if hasChanged && time.Now().After(minWaitDeadline) && time.Since(lastChangedTime) >= 800*time.Millisecond {
-							// La salida cambió y se ha mantenido estable por 800ms -> comando finalizado
-							break
-						} else if !hasChanged && time.Now().After(minWaitDeadline) && time.Since(lastChangedTime) >= 2500*time.Millisecond {
-							// No hubo cambio luego de 2.5s -> comando silencioso o finalizado
-							break
-						}
-					}
-				}
-
-				finalOutput, _ := getTermScrollbackOutput(ctx, tabId, parsed.WidgetId, wshrpc.CommandTermGetScrollbackLinesData{LineStart: 0, LineEnd: 50, LastCommand: false})
-				outputContent := ""
-				returnedLines := 0
-				totalLines := 0
-				if finalOutput != nil {
-					outputContent = finalOutput.Content
-					returnedLines = finalOutput.ReturnedLines
-					totalLines = finalOutput.TotalLines
-				}
-
-				sse.SendDebugLog(ctx, sse.LogCatTerminal, fmt.Sprintf("[TERM] Output captured in %s (%d lines, no shell integration)", parsed.WidgetId, returnedLines))
-				return map[string]any{
-					"status":        "done",
-					"output":        outputContent,
-					"returnedlines": returnedLines,
-					"totallines":    totalLines,
-					"note":          "Captured directly from terminal screen buffer.",
-				}, nil
+			// Initial snapshot for fallback stabilization check
+			initialOutput, _ := getTermScrollbackOutput(ctx, tabId, parsed.WidgetId, wshrpc.CommandTermGetScrollbackLinesData{LineStart: 0, LineEnd: 50, LastCommand: false})
+			initialContent := ""
+			if initialOutput != nil {
+				initialContent = initialOutput.Content
 			}
+			lastSeenContent := initialContent
+			lastChangedTime := time.Now()
+			hasChanged := false
 
-			// TERMINAL CON SHELL INTEGRATION ACTIVA:
 			for time.Now().Before(deadline) {
-				rtInfo = wstore.GetRTInfo(blockORef)
-				if rtInfo != nil && rtInfo.ShellState != "running-command" && rtInfo.ShellLastCmd != "" {
-					// Command finished, get output
-					output, err := getTermScrollbackOutput(
-						ctx,
-						tabId,
-						parsed.WidgetId,
-						wshrpc.CommandTermGetScrollbackLinesData{
-							LastCommand: true,
-						},
-					)
-					if err != nil {
-						return map[string]any{
-							"status":   "done",
-							"exitcode": rtInfo.ShellLastCmdExitCode,
-							"output":   "",
-							"error":    fmt.Sprintf("command completed but failed to get output: %v", err),
-						}, nil
-					}
-
-					sse.SendDebugLog(ctx, sse.LogCatTerminal, fmt.Sprintf("[TERM] Command completed in %s (exit=%d, %d lines)", parsed.WidgetId, rtInfo.ShellLastCmdExitCode, output.ReturnedLines))
-
-					return map[string]any{
-						"status":        "done",
-						"exitcode":      rtInfo.ShellLastCmdExitCode,
-						"output":        output.Content,
-						"returnedlines": output.ReturnedLines,
-						"totallines":    output.TotalLines,
-					}, nil
-				}
-
 				if ctx.Err() != nil {
-					// Enviar señal Ctrl+C (\x03) al terminal para matar el proceso activo
 					ctrlC := base64.StdEncoding.EncodeToString([]byte("\x03"))
 					_ = wshclient.ControllerInputCommand(
 						rpcClient,
@@ -962,6 +836,138 @@ func GetTermRunAndWaitToolDefinition(tabId string) uctypes.ToolDefinition {
 				}
 
 				time.Sleep(pollInterval)
+				rtInfo = wstore.GetRTInfo(blockORef)
+
+				if hasShellIntegration && rtInfo != nil && rtInfo.ShellIntegration {
+					if rtInfo.ShellState == "running-command" {
+						seenRunningState = true
+					}
+
+					// Caso A: El comando estuvo ejecutándose y volvió a 'ready' -> finalizado
+					if seenRunningState && rtInfo.ShellState == "ready" {
+						time.Sleep(100 * time.Millisecond) // Esperar a que el buffer y marcadores de xterm asienten
+						output, err := getTermScrollbackOutput(
+							ctx,
+							tabId,
+							parsed.WidgetId,
+							wshrpc.CommandTermGetScrollbackLinesData{
+								LastCommand: true,
+							},
+						)
+						if err != nil {
+							return map[string]any{
+								"status":   "done",
+								"exitcode": rtInfo.ShellLastCmdExitCode,
+								"output":   "",
+								"error":    fmt.Sprintf("command completed but failed to get output: %v", err),
+							}, nil
+						}
+
+						sse.SendDebugLog(ctx, sse.LogCatTerminal, fmt.Sprintf("[TERM] Command completed in %s (exit=%d, %d lines)", parsed.WidgetId, rtInfo.ShellLastCmdExitCode, output.ReturnedLines))
+
+						return map[string]any{
+							"status":        "done",
+							"exitcode":      rtInfo.ShellLastCmdExitCode,
+							"output":        output.Content,
+							"returnedlines": output.ReturnedLines,
+							"totallines":    output.TotalLines,
+						}, nil
+					}
+
+					// Caso B: Comando muy rápido que pasó directo a 'ready' con ShellLastCmd actualizado
+					if !seenRunningState && rtInfo.ShellState == "ready" && rtInfo.ShellLastCmd != initialCmd && rtInfo.ShellLastCmd != "" {
+						time.Sleep(100 * time.Millisecond)
+						output, err := getTermScrollbackOutput(
+							ctx,
+							tabId,
+							parsed.WidgetId,
+							wshrpc.CommandTermGetScrollbackLinesData{
+								LastCommand: true,
+							},
+						)
+						if err == nil && output != nil {
+							sse.SendDebugLog(ctx, sse.LogCatTerminal, fmt.Sprintf("[TERM] Fast command completed in %s (exit=%d, %d lines)", parsed.WidgetId, rtInfo.ShellLastCmdExitCode, output.ReturnedLines))
+
+							return map[string]any{
+								"status":        "done",
+								"exitcode":      rtInfo.ShellLastCmdExitCode,
+								"output":        output.Content,
+								"returnedlines": output.ReturnedLines,
+								"totallines":    output.TotalLines,
+							}, nil
+						}
+					}
+
+					// Caso C: Si pasaron más de 1.5s sin entrar en running-command (ej. comando sin OSC o buffer estático)
+					if !seenRunningState && time.Since(startTime) > 1500*time.Millisecond {
+						currentOutput, err := getTermScrollbackOutput(ctx, tabId, parsed.WidgetId, wshrpc.CommandTermGetScrollbackLinesData{LineStart: 0, LineEnd: 50, LastCommand: false})
+						if err == nil && currentOutput != nil {
+							if currentOutput.Content != lastSeenContent {
+								lastSeenContent = currentOutput.Content
+								lastChangedTime = time.Now()
+								hasChanged = true
+							} else if (hasChanged && time.Since(lastChangedTime) >= 600*time.Millisecond) || (!hasChanged && time.Since(lastChangedTime) >= 2000*time.Millisecond) {
+								if rtInfo.ShellState == "ready" {
+									lastCmdOutput, _ := getTermScrollbackOutput(ctx, tabId, parsed.WidgetId, wshrpc.CommandTermGetScrollbackLinesData{LastCommand: true})
+									if lastCmdOutput != nil && lastCmdOutput.Content != "" {
+										return map[string]any{
+											"status":        "done",
+											"exitcode":      rtInfo.ShellLastCmdExitCode,
+											"output":        lastCmdOutput.Content,
+											"returnedlines": lastCmdOutput.ReturnedLines,
+											"totallines":    lastCmdOutput.TotalLines,
+										}, nil
+									}
+									return map[string]any{
+										"status":        "done",
+										"exitcode":      rtInfo.ShellLastCmdExitCode,
+										"output":        currentOutput.Content,
+										"returnedlines": currentOutput.ReturnedLines,
+										"totallines":    currentOutput.TotalLines,
+									}, nil
+								}
+							}
+						}
+					}
+				} else {
+					// TERMINAL SIN SHELL INTEGRATION (ej. zsh estándar, ssh):
+					// Esperamos a que el comando ejecute y estabilice su salida
+					currentOutput, err := getTermScrollbackOutput(ctx, tabId, parsed.WidgetId, wshrpc.CommandTermGetScrollbackLinesData{LineStart: 0, LineEnd: 50, LastCommand: false})
+					if err == nil && currentOutput != nil {
+						if currentOutput.Content != lastSeenContent {
+							lastSeenContent = currentOutput.Content
+							lastChangedTime = time.Now()
+							hasChanged = true
+						} else if hasChanged && time.Now().After(minWaitDeadline) && time.Since(lastChangedTime) >= 800*time.Millisecond {
+							// La salida cambió y se ha mantenido estable por 800ms -> comando finalizado
+							break
+						} else if !hasChanged && time.Now().After(minWaitDeadline) && time.Since(lastChangedTime) >= 2500*time.Millisecond {
+							// No hubo cambio luego de 2.5s -> comando silencioso o finalizado
+							break
+						}
+					}
+				}
+			}
+
+			// Si salimos del bucle sin retorno anticipado (fallback sin shell integration o timeout):
+			finalOutput, _ := getTermScrollbackOutput(ctx, tabId, parsed.WidgetId, wshrpc.CommandTermGetScrollbackLinesData{LineStart: 0, LineEnd: 50, LastCommand: false})
+			outputContent := ""
+			returnedLines := 0
+			totalLines := 0
+			if finalOutput != nil {
+				outputContent = finalOutput.Content
+				returnedLines = finalOutput.ReturnedLines
+				totalLines = finalOutput.TotalLines
+			}
+
+			if time.Now().Before(deadline) {
+				sse.SendDebugLog(ctx, sse.LogCatTerminal, fmt.Sprintf("[TERM] Output captured in %s (%d lines)", parsed.WidgetId, returnedLines))
+				return map[string]any{
+					"status":        "done",
+					"output":        outputContent,
+					"returnedlines": returnedLines,
+					"totallines":    totalLines,
+				}, nil
 			}
 
 			// Timeout - Enviar Ctrl+C para liberar el terminal

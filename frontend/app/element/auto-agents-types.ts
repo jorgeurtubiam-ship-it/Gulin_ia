@@ -37,6 +37,7 @@ export interface AgentTask {
 export interface AgentChatMessage {
     role: "user" | "assistant";
     agent_id?: string;
+    agent_name?: string;
     text: string;
     timestamp: string;
     is_group?: boolean;

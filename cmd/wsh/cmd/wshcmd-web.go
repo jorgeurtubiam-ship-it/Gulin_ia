@@ -6,6 +6,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/gulindev/gulin/pkg/gulinobj"
@@ -117,12 +120,30 @@ func webOpenRun(cmd *cobra.Command, args []string) (rtnErr error) {
 		return fmt.Errorf("no GULIN_TABID env var set")
 	}
 
+	urlArg := args[0]
+	if !strings.HasPrefix(urlArg, "http://") && !strings.HasPrefix(urlArg, "https://") && !strings.HasPrefix(urlArg, "file://") && !strings.HasPrefix(urlArg, "data:") && !strings.HasPrefix(urlArg, "about:") {
+		// Check if it corresponds to a local file or path
+		expandedPath := urlArg
+		if strings.HasPrefix(expandedPath, "~/") {
+			homeDir, _ := os.UserHomeDir()
+			if homeDir != "" {
+				expandedPath = filepath.Join(homeDir, expandedPath[2:])
+			}
+		}
+		if _, err := os.Stat(expandedPath); err == nil || strings.HasPrefix(urlArg, "/") || strings.HasPrefix(urlArg, "./") || strings.HasPrefix(urlArg, "../") || strings.HasSuffix(strings.ToLower(urlArg), ".html") || strings.HasSuffix(strings.ToLower(urlArg), ".htm") || strings.HasSuffix(strings.ToLower(urlArg), ".svg") {
+			absPath, err := filepath.Abs(expandedPath)
+			if err == nil {
+				urlArg = "file://" + filepath.ToSlash(absPath)
+			}
+		}
+	}
+
 	wshCmd := wshrpc.CommandCreateBlockData{
 		TabId: tabId,
 		BlockDef: &gulinobj.BlockDef{
 			Meta: map[string]any{
 				gulinobj.MetaKey_View: "web",
-				gulinobj.MetaKey_Url:  args[0],
+				gulinobj.MetaKey_Url:  urlArg,
 			},
 		},
 		Magnified: webOpenMagnified,

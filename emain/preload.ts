@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld("api", {
     doRefresh: () => ipcRenderer.send("do-refresh"),
     saveTextFile: (fileName: string, content: string) => ipcRenderer.invoke("save-text-file", fileName, content),
     readTextFile: (filePath: string) => ipcRenderer.invoke("read-text-file", filePath),
+    openFileDialog: (options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) =>
+        ipcRenderer.invoke("open-file-dialog", options),
     writeTextFile: (filePath: string, content: string) => ipcRenderer.invoke("write-text-file", filePath, content),
     voiceTranscribeLocal: (audioBase64: string, mimeType: string) =>
         ipcRenderer.invoke("gulin-voice-transcribe-local", { audioBase64, mimeType }),

@@ -90,6 +90,6 @@ export function computeBgStyleFromMeta(meta: MetaType, defaultOpacity: number = 
 }
 
 export function formatRemoteUri(path: string, connection: string): string {
-    connection = connection ?? "local";
+    connection = isBlank(connection) ? "local" : connection;
     return `wsh://${connection}/${path}`;
 }

@@ -92,7 +92,7 @@ export function MonacoCodeEditor({ text, readonly, language, onChange, onMount, 
         if (current === text) return;
 
         applyingFromProps.current = true;
-        model.pushEditOperations([], [{ range: model.getFullModelRange(), text }], () => null);
+        model.pushEditOperations([], [{ range: model.getFullModelRange(), text: text ?? "" }], () => null);
         applyingFromProps.current = false;
     }, [text]);
 

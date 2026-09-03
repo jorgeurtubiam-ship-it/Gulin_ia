@@ -9,9 +9,23 @@ import { makeFeBlockRouteId } from "@/app/store/wshrouter";
 import { TermViewModel } from "@/app/view/term/term-model";
 import { bufferLinesToText } from "@/app/view/term/termutil";
 import { isBlank } from "@/util/util";
+import type * as TermTypes from "@xterm/xterm";
 import debug from "debug";
 
 const dlog = debug("gulin:vdom");
+
+function getEffectiveBufferLength(buffer: TermTypes.IBuffer): number {
+    const cursorAbsY = buffer.baseY + buffer.cursorY;
+    let lastNonEmpty = cursorAbsY;
+    for (let i = buffer.length - 1; i > cursorAbsY; i--) {
+        const line = buffer.getLine(i);
+        if (line && line.translateToString(true).trim() !== "") {
+            lastNonEmpty = i;
+            break;
+        }
+    }
+    return Math.max(1, lastNonEmpty + 1);
+}
 
 export class TermWshClient extends WshClient {
     blockId: string;
@@ -121,61 +135,61 @@ export class TermWshClient extends WshClient {
 
         const buffer = termWrap.terminal.buffer.active;
         const totalLines = buffer.length;
+        const effectiveTotal = getEffectiveBufferLength(buffer);
 
         if (data.lastcommand) {
-            const hasIntegration = globalStore.get(termWrap.shellIntegrationStatusAtom) != null;
-            if (!hasIntegration || termWrap.promptMarkers.length === 0) {
-                // Fallback: If no shell integration markers exist, return the most recent active lines of the terminal buffer
-                const fallbackCount = Math.min(totalLines, 100);
-                const startBufferIndex = totalLines - fallbackCount;
-                const endBufferIndex = totalLines;
-                const lines = bufferLinesToText(buffer, startBufferIndex, endBufferIndex);
-                return {
-                    totallines: totalLines,
-                    linestart: 0,
-                    lines: lines,
-                    lastupdated: termWrap.lastUpdated,
-                };
-            }
+            const shellStatus = globalStore.get(termWrap.shellIntegrationStatusAtom);
+            const validMarkers = termWrap.promptMarkers.filter(
+                (m) => !m.isDisposed && m.line >= 0 && m.line < totalLines
+            );
 
             let startBufferIndex = 0;
-            let endBufferIndex = totalLines;
-            if (termWrap.promptMarkers.length > 0) {
-                // The last marker is the current prompt, so we want the second-to-last for the previous command
-                // If there's only one marker, use it (edge case for first command)
-                const markerIndex =
-                    termWrap.promptMarkers.length > 1
-                        ? termWrap.promptMarkers.length - 2
-                        : termWrap.promptMarkers.length - 1;
-                const commandStartMarker = termWrap.promptMarkers[markerIndex];
-                startBufferIndex = commandStartMarker.line;
+            let endBufferIndex = effectiveTotal;
 
-                // End at the last marker (current prompt) if there are multiple markers
-                if (termWrap.promptMarkers.length > 1) {
-                    const currentPromptMarker = termWrap.promptMarkers[termWrap.promptMarkers.length - 1];
-                    endBufferIndex = currentPromptMarker.line;
+            if (validMarkers.length > 0) {
+                if (shellStatus === "running-command") {
+                    // Command is currently executing: started at latest marker, extends to active cursor line
+                    const currentCmdMarker = validMarkers[validMarkers.length - 1];
+                    startBufferIndex = currentCmdMarker.line;
+                    endBufferIndex = effectiveTotal;
+                } else {
+                    // Command finished: started at previous marker, ended at last prompt marker
+                    if (validMarkers.length > 1) {
+                        const cmdStartMarker = validMarkers[validMarkers.length - 2];
+                        const currentPromptMarker = validMarkers[validMarkers.length - 1];
+                        startBufferIndex = cmdStartMarker.line;
+                        endBufferIndex = currentPromptMarker.line;
+                    } else {
+                        const cmdStartMarker = validMarkers[0];
+                        startBufferIndex = cmdStartMarker.line;
+                        endBufferIndex = effectiveTotal;
+                    }
                 }
+            } else {
+                // Fallback: If no markers exist, return the most recent active lines of the buffer
+                const fallbackCount = Math.min(effectiveTotal, 100);
+                startBufferIndex = Math.max(0, effectiveTotal - fallbackCount);
+                endBufferIndex = effectiveTotal;
+            }
+
+            // Ensure valid bounds
+            if (startBufferIndex >= endBufferIndex || startBufferIndex < 0) {
+                const fallbackCount = Math.min(effectiveTotal, 50);
+                startBufferIndex = Math.max(0, effectiveTotal - fallbackCount);
+                endBufferIndex = effectiveTotal;
             }
 
             const lines = bufferLinesToText(buffer, startBufferIndex, endBufferIndex);
 
-            // Convert buffer indices to "from bottom" line numbers.
-            // "from bottom" 0 = most recent line; higher numbers = older lines.
-            // The buffer range [startBufferIndex, endBufferIndex) maps to
-            // "from bottom" range [totalLines - endBufferIndex, totalLines - startBufferIndex).
-            // The first returned line is at "from bottom" position: totalLines - endBufferIndex.
             let returnLines = lines;
-            let returnStartLine = totalLines - endBufferIndex;
-            if (lines.length > 1000) {
-                // there is a small bug here since this is computing a physical start line
-                // after the lines have already been combined (because of potential wrapping)
-                // for now this isn't worth fixing, just noted
-                returnLines = lines.slice(lines.length - 1000);
-                returnStartLine = (totalLines - endBufferIndex) + (lines.length - 1000);
+            let returnStartLine = Math.max(0, effectiveTotal - endBufferIndex);
+            if (lines.length > 5000) {
+                returnLines = lines.slice(lines.length - 5000);
+                returnStartLine = Math.max(0, effectiveTotal - endBufferIndex) + (lines.length - 5000);
             }
 
             return {
-                totallines: totalLines,
+                totallines: effectiveTotal,
                 linestart: returnStartLine,
                 lines: returnLines,
                 lastupdated: termWrap.lastUpdated,
@@ -183,14 +197,14 @@ export class TermWshClient extends WshClient {
         }
 
         const startLine = Math.max(0, data.linestart);
-        const endLine = data.lineend === 0 ? totalLines : Math.min(totalLines, data.lineend);
+        const endLine = data.lineend === 0 ? effectiveTotal : Math.min(effectiveTotal, data.lineend);
 
-        const startBufferIndex = totalLines - endLine;
-        const endBufferIndex = totalLines - startLine;
+        const startBufferIndex = Math.max(0, effectiveTotal - endLine);
+        const endBufferIndex = Math.max(0, effectiveTotal - startLine);
         const lines = bufferLinesToText(buffer, startBufferIndex, endBufferIndex);
 
         return {
-            totallines: totalLines,
+            totallines: effectiveTotal,
             linestart: startLine,
             lines: lines,
             lastupdated: termWrap.lastUpdated,

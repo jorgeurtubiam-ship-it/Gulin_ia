@@ -483,7 +483,7 @@ func (b *plaiBackend) RunChatStep(
 				toolName = name
 				delete(params, "name")
 			} else if _, hasCmd := params["command"]; hasCmd {
-				toolName = "term_run_command"
+				toolName = "term_run_and_wait"
 			}
 			
 			if toolName != "" {
@@ -523,7 +523,7 @@ func (b *plaiBackend) RunChatStep(
 			}
 			toolCalls = append(toolCalls, uctypes.GulinToolCall{
 				ID:    uuid.New().String(),
-				Name:  "term_run_command",
+				Name:  "term_run_and_wait",
 				Input: params,
 			})
 			cleanContent = strings.Replace(cleanContent, m[0], "", 1)

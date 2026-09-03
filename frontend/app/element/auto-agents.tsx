@@ -83,9 +83,25 @@ const CustomAgentNode = ({ data }: any) => {
                 </div>
             ) : (
                 <>
-                    <div className="flex gap-4 border-b border-gray-600 mb-2 px-1">
-                        <button onClick={() => setActiveTab("chat")} className={`pb-1 text-sm font-medium ${activeTab === 'chat' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-gray-400 hover:text-gray-300'}`}>Chat</button>
-                        <button onClick={() => setActiveTab("logs")} className={`pb-1 text-sm font-medium ${activeTab === 'logs' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-gray-400 hover:text-gray-300'}`}>Logs</button>
+                    <div className="flex items-center justify-between border-b border-gray-600 mb-2 px-1">
+                        <div className="flex gap-4">
+                            <button onClick={() => setActiveTab("chat")} className={`pb-1 text-sm font-medium ${activeTab === 'chat' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-gray-400 hover:text-gray-300'}`}>Chat</button>
+                            <button onClick={() => setActiveTab("logs")} className={`pb-1 text-sm font-medium ${activeTab === 'logs' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-gray-400 hover:text-gray-300'}`}>Logs</button>
+                        </div>
+                        {activeTab === 'chat' && messages.length > 0 && data.onClearAgentChat && (
+                            <button 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (confirm(`¿Borrar historial de chat con ${data.label}?`)) {
+                                        data.onClearAgentChat(data.agentId);
+                                    }
+                                }}
+                                className="text-gray-400 hover:text-red-400 text-xs pb-1 transition-colors flex items-center gap-1 nodrag cursor-pointer"
+                                title="Limpiar historial de este agente"
+                            >
+                                🗑️ Limpiar
+                            </button>
+                        )}
                     </div>
                     {activeTab === 'chat' ? (
                         <div className="flex-1 overflow-y-auto mb-3 space-y-2 bg-gray-900/50 p-3 rounded nowheel nodrag">
@@ -93,8 +109,20 @@ const CustomAgentNode = ({ data }: any) => {
                                 <div className="text-gray-500 text-sm text-center py-4">No hay mensajes</div>
                             ) : (
                                 messages.map((msg: any, i: number) => (
-                                    <div key={i} className={`flex gap-2 ${msg.role === "user" ? "justify-end" : ""}`}>
-                                        <div className={`px-3 py-2 rounded text-sm max-w-[90%] ${msg.role === "user" ? "bg-indigo-700 text-white" : "bg-gray-800 text-gray-200"}`}>
+                                    <div key={i} className={`group/msg relative flex gap-2 ${msg.role === "user" ? "justify-end" : ""}`}>
+                                        <div className={`relative px-3 py-2 rounded text-sm max-w-[90%] ${msg.role === "user" ? "bg-indigo-700 text-white" : "bg-gray-800 text-gray-200"}`}>
+                                            {data.onDeleteAgentMessage && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        data.onDeleteAgentMessage(data.agentId, i);
+                                                    }}
+                                                    className="absolute -top-1.5 -right-1.5 opacity-0 group-hover/msg:opacity-100 w-4 h-4 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center text-[10px] shadow transition-opacity cursor-pointer z-10"
+                                                    title="Eliminar mensaje"
+                                                >
+                                                    ✕
+                                                </button>
+                                            )}
                                             <div className="whitespace-pre-wrap">{msg.text}</div>
                                         </div>
                                     </div>
@@ -151,7 +179,17 @@ const ConditionNode = ({ data }: any) => {
     );
 };
 
-const GroupChatPanel = ({ messages, onSendMessage }: { messages: any[], onSendMessage: (msg: string, id: string | null, isGroup: boolean) => void }) => {
+const GroupChatPanel = ({ 
+    messages, 
+    onSendMessage,
+    onClearMessages,
+    onDeleteMessage
+}: { 
+    messages: any[], 
+    onSendMessage: (msg: string, id: string | null, isGroup: boolean) => void,
+    onClearMessages?: () => void,
+    onDeleteMessage?: (index: number) => void
+}) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const [input, setInput] = useState("");
     const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -173,6 +211,20 @@ const GroupChatPanel = ({ messages, onSendMessage }: { messages: any[], onSendMe
                     <span className="text-xs px-2 py-0.5 rounded bg-indigo-800 text-indigo-200 border border-indigo-600/40">
                         {messages.length} mensajes
                     </span>
+                    {onClearMessages && messages.length > 0 && isExpanded && (
+                        <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm("¿Estás seguro de que deseas borrar toda la conversación del chat grupal?")) {
+                                    onClearMessages();
+                                }
+                            }}
+                            className="text-indigo-300 hover:text-red-400 p-1 rounded hover:bg-indigo-950/60 transition-colors text-xs flex items-center gap-1 cursor-pointer"
+                            title="Borrar conversación grupal"
+                        >
+                            🗑️
+                        </button>
+                    )}
                     <button className="text-indigo-300 hover:text-white font-bold">
                         {isExpanded ? '▼' : '▲'}
                     </button>
@@ -188,12 +240,24 @@ const GroupChatPanel = ({ messages, onSendMessage }: { messages: any[], onSendMe
                             </div>
                         ) : (
                             messages.map((msg: any, i: number) => (
-                                <div key={i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} w-full`}>
-                                    <div className={`p-3 rounded-lg text-sm max-w-[95%] shadow-md border ${
+                                <div key={i} className={`group/msg relative flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} w-full`}>
+                                    <div className={`relative p-3 rounded-lg text-sm max-w-[95%] shadow-md border ${
                                         msg.role === "user" 
                                             ? "bg-indigo-600 border-indigo-500 text-white" 
                                             : "bg-gray-900 border-gray-700/80 text-gray-200"
                                     }`}>
+                                        {onDeleteMessage && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onDeleteMessage(i);
+                                                }}
+                                                className="absolute -top-1.5 -right-1.5 opacity-0 group-hover/msg:opacity-100 w-4 h-4 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center text-[10px] shadow transition-opacity cursor-pointer z-10"
+                                                title="Eliminar mensaje"
+                                            >
+                                                ✕
+                                            </button>
+                                        )}
                                         {msg.role === "assistant" && (
                                             <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-gray-700/60">
                                                 <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
@@ -477,6 +541,37 @@ INSTRUCCIÓN: Responde ÚNICAMENTE desde tu especialidad y rol como ${agent.name
         []
     );
 
+    // Chat clearing and message deletion helpers
+    const clearGroupChat = useCallback(() => {
+        setChatMessages(prev => prev.filter(m => !m.is_group));
+    }, []);
+
+    const deleteGroupMessage = useCallback((msgIndex: number) => {
+        setChatMessages(prev => {
+            const groupMsgs = prev.filter(m => m.is_group);
+            const targetMsg = groupMsgs[msgIndex];
+            if (!targetMsg) return prev;
+            const targetIndex = prev.indexOf(targetMsg);
+            if (targetIndex === -1) return prev;
+            return [...prev.slice(0, targetIndex), ...prev.slice(targetIndex + 1)];
+        });
+    }, []);
+
+    const clearAgentChat = useCallback((agentId: string) => {
+        setChatMessages(prev => prev.filter(m => m.agent_id !== agentId || m.is_group));
+    }, []);
+
+    const deleteAgentMessage = useCallback((agentId: string, msgIndex: number) => {
+        setChatMessages(prev => {
+            const agentMsgs = prev.filter(m => !m.is_group && m.agent_id === agentId);
+            const targetMsg = agentMsgs[msgIndex];
+            if (!targetMsg) return prev;
+            const targetIndex = prev.indexOf(targetMsg);
+            if (targetIndex === -1) return prev;
+            return [...prev.slice(0, targetIndex), ...prev.slice(targetIndex + 1)];
+        });
+    }, []);
+
     useEffect(() => {
         setNodes((prev) => {
             const prevMap = new Map(prev.map(n => [n.id, n]));
@@ -496,6 +591,8 @@ INSTRUCCIÓN: Responde ÚNICAMENTE desde tu especialidad y rol como ${agent.name
                     status: agentStatuses[agent.id] || "idle",
                     messages: chatMessages.filter(m => !m.is_group && m.agent_id === agent.id),
                     onSendMessage: sendMessage,
+                    onClearAgentChat: clearAgentChat,
+                    onDeleteAgentMessage: deleteAgentMessage,
                     agentId: agent.id,
                     onConfigClick: () => { setSelectedAgentId(agent.id); setViewMode("edit"); }
                 };
@@ -515,7 +612,7 @@ INSTRUCCIÓN: Responde ÚNICAMENTE desde tu especialidad y rol como ${agent.name
             });
             return newNodes;
         });
-    }, [agents, agentStatuses, chatMessages, sendMessage, aiConfigs]);
+    }, [agents, agentStatuses, chatMessages, sendMessage, aiConfigs, clearAgentChat, deleteAgentMessage]);
 
     const lastRunRef = useRef<Record<string, number>>({});
 
@@ -766,7 +863,12 @@ INSTRUCCIÓN: Responde ÚNICAMENTE desde tu especialidad y rol como ${agent.name
             </div>
             
             {/* Group Chat Fixed Panel */}
-            <GroupChatPanel messages={chatMessages.filter(m => m.is_group)} onSendMessage={sendMessage} />
+            <GroupChatPanel 
+                messages={chatMessages.filter(m => m.is_group)} 
+                onSendMessage={sendMessage} 
+                onClearMessages={clearGroupChat}
+                onDeleteMessage={deleteGroupMessage}
+            />
 
             {/* Configuration Modal */}
             {selectedAgent && viewMode === "edit" && (
@@ -1071,7 +1173,7 @@ async function callAgentAPI(agent: AgentData, prompt: string, apiKey: string, en
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     agentid: agent.id,
-                    agentname: agent.label || agent.name || "Agent",
+                    agentname: agent.name || "Agent",
                     log: `--- [Prompt] ---\n${prompt}\n\n--- [Respuesta] ---\n${fullMsg}\n`
                 })
             }).catch(e => console.error("Error guardando log", e));

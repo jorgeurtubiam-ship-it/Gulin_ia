@@ -503,6 +503,22 @@ export function initIpcHandlers() {
         }
     });
 
+    electron.ipcMain.handle("open-file-dialog", async (event, options?: { filters?: electron.FileFilter[]; title?: string }) => {
+        const ww = focusedGulinWindow;
+        const result = await electron.dialog.showOpenDialog(ww, {
+            title: options?.title || "Open File",
+            properties: ["openFile"],
+            filters: options?.filters || [
+                { name: "HTML & Web Files", extensions: ["html", "htm", "xhtml", "svg", "xml", "mhtml"] },
+                { name: "All Files", extensions: ["*"] },
+            ],
+        });
+        if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+            return null;
+        }
+        return result.filePaths[0];
+    });
+
     electron.ipcMain.handle("write-text-file", async (event, filePath: string, content: string) => {
         try {
             await fs.promises.writeFile(filePath, content, "utf-8");

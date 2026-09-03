@@ -6,13 +6,13 @@ import type { TabModel } from "@/app/store/tab-model";
 import { ContextMenuModel } from "@/app/store/contextmenu";
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
-import { getConnStatusAtom, getOverrideConfigAtom, getSettingsKeyAtom, globalStore, refocusNode } from "@/store/global";
+import { createBlock, getConnStatusAtom, getOverrideConfigAtom, getSettingsKeyAtom, globalStore, refocusNode } from "@/store/global";
 import * as services from "@/store/services";
 import * as WOS from "@/store/wos";
 import { goHistory, goHistoryBack, goHistoryForward } from "@/util/historyutil";
 import { checkKeyPressed } from "@/util/keyutil";
 import { addOpenMenuItems } from "@/util/previewutil";
-import { base64ToString, fireAndForget, isBlank, jotaiLoadableValue, stringToBase64 } from "@/util/util";
+import { base64ToString, fireAndForget, isBlank, isLocalConnName, jotaiLoadableValue, stringToBase64 } from "@/util/util";
 import { formatRemoteUri } from "@/util/gulinutil";
 import clsx from "clsx";
 import { Atom, atom, Getter, PrimitiveAtom, WritableAtom } from "jotai";
@@ -361,15 +361,41 @@ export class PreviewModel implements ViewModel {
                     },
                 ] as IconButtonDecl[];
             } else if (!isCeView && mimeType) {
-                // For all other file types (text, code, etc.), add refresh button
-                return [
-                    {
+                const metaPath = (get(this.metaFilePath) || "").toLowerCase();
+                const isWeb = mimeType === "text/html" || metaPath.endsWith(".html") || metaPath.endsWith(".htm") || metaPath.endsWith(".svg");
+                const btns: IconButtonDecl[] = [];
+                if (isWeb) {
+                    btns.push({
                         elemtype: "iconbutton",
-                        icon: "arrows-rotate",
-                        title: "Refresh",
-                        click: () => this.refreshCallback?.(),
-                    },
-                ] as IconButtonDecl[];
+                        icon: "globe",
+                        title: "Open in Web Browser",
+                        click: () => {
+                            fireAndForget(async () => {
+                                const filePath = await globalStore.get(this.statFilePath);
+                                if (filePath) {
+                                    const normalized = filePath.replace(/\\/g, "/");
+                                    const fileUrl = normalized.startsWith("/") ? `file://${normalized}` : `file:///${normalized}`;
+                                    const conn = await globalStore.get(this.connection);
+                                    const blockDef: BlockDef = {
+                                        meta: {
+                                            view: "web",
+                                            url: fileUrl,
+                                            connection: conn,
+                                        },
+                                    };
+                                    await createBlock(blockDef);
+                                }
+                            });
+                        },
+                    });
+                }
+                btns.push({
+                    elemtype: "iconbutton",
+                    icon: "arrows-rotate",
+                    title: "Refresh",
+                    click: () => this.refreshCallback?.(),
+                });
+                return btns;
             }
             return null;
         });
@@ -387,12 +413,14 @@ export class PreviewModel implements ViewModel {
         this.connection = atom<Promise<string>>(async (get) => {
             const connName = get(this.blockAtom)?.meta?.connection;
             try {
-                await RpcApi.ConnEnsureCommand(TabRpcClient, { connname: connName }, { timeout: 60000 });
+                if (connName && !isLocalConnName(connName)) {
+                    await RpcApi.ConnEnsureCommand(TabRpcClient, { connname: connName }, { timeout: 60000 });
+                }
                 globalStore.set(this.connectionError, "");
             } catch (e) {
                 globalStore.set(this.connectionError, e as string);
             }
-            return connName;
+            return isBlank(connName) ? "local" : connName;
         });
         this.connectionImmediate = atom<string>((get) => {
             return get(this.blockAtom)?.meta?.connection;

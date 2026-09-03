@@ -134,6 +134,8 @@ declare global {
         doRefresh: () => void; // do-refresh
         saveTextFile: (fileName: string, content: string) => Promise<boolean>; // save-text-file
         readTextFile: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>; // read-text-file
+        openFileDialog: (options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => Promise<string | null>; // open-file-dialog
+        writeTextFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>; // write-text-file
         voiceTranscribeLocal: (audioBase64: string, mimeType: string) => Promise<{ success: boolean; transcript?: string; error?: string }>; // gulin-voice-transcribe-local
         nativeSpeak: (text: string) => Promise<boolean>; // gulin-native-tts-say
         nativeStopSpeak: () => Promise<boolean>; // gulin-native-tts-stop

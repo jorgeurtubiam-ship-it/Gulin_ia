@@ -98,10 +98,10 @@ function CodeEditPreview({ model }: SpecializedViewProps) {
     return (
         <CodeEditor
             blockId={model.blockId}
-            text={fileContent}
+            text={fileContent ?? ""}
             fileName={fileName}
             language={language}
-            readonly={fileInfo.readonly}
+            readonly={fileInfo?.readonly ?? false}
             onChange={(text) => setNewFileContent(text)}
             onMount={onMount}
         />

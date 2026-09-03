@@ -17,6 +17,7 @@ import (
 )
 
 var viewMagnified bool
+var viewWeb bool
 
 var viewCmd = &cobra.Command{
 	Use:     "view {file|directory|URL}",
@@ -35,6 +36,7 @@ var editCmd = &cobra.Command{
 
 func init() {
 	viewCmd.Flags().BoolVarP(&viewMagnified, "magnified", "m", false, "open view in magnified mode")
+	viewCmd.Flags().BoolVarP(&viewWeb, "web", "w", false, "open file in web browser view")
 	rootCmd.AddCommand(viewCmd)
 	editCmd.Flags().BoolVarP(&viewMagnified, "magnified", "m", false, "open view in magnified mode")
 	rootCmd.AddCommand(editCmd)
@@ -60,13 +62,20 @@ func viewRun(cmd *cobra.Command, args []string) (rtnErr error) {
 	fileArg := args[0]
 	conn := RpcContext.Conn
 	var wshCmd *wshrpc.CommandCreateBlockData
-	if strings.HasPrefix(fileArg, "http://") || strings.HasPrefix(fileArg, "https://") {
+	if strings.HasPrefix(fileArg, "http://") || strings.HasPrefix(fileArg, "https://") || strings.HasPrefix(fileArg, "file://") || viewWeb {
+		urlToOpen := fileArg
+		if viewWeb && !strings.HasPrefix(fileArg, "http://") && !strings.HasPrefix(fileArg, "https://") && !strings.HasPrefix(fileArg, "file://") {
+			absFile, err := filepath.Abs(fileArg)
+			if err == nil {
+				urlToOpen = "file://" + filepath.ToSlash(absFile)
+			}
+		}
 		wshCmd = &wshrpc.CommandCreateBlockData{
 			TabId: tabId,
 			BlockDef: &gulinobj.BlockDef{
 				Meta: map[string]any{
 					gulinobj.MetaKey_View: "web",
-					gulinobj.MetaKey_Url:  fileArg,
+					gulinobj.MetaKey_Url:  urlToOpen,
 				},
 			},
 			Magnified: viewMagnified,
