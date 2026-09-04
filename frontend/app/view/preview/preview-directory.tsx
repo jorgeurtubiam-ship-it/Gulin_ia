@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ContextMenuModel } from "@/app/store/contextmenu";
-import { atoms, getApi, globalStore } from "@/app/store/global";
+import { atoms, createBlock, getApi, globalStore } from "@/app/store/global";
 import { RpcApi } from "@/app/store/wshclientapi";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
 import { checkKeyPressed, isCharacterKeyEvent } from "@/util/keyutil";
@@ -537,7 +537,16 @@ const TableRow = React.forwardRef(function ({
                 const isHtml = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
 
                 if (isHtml) {
-                    getApi().openNativePath(newFileName);
+                    const normalized = newFileName.replace(/\\/g, "/");
+                    const fileUrl = normalized.startsWith("/") ? `file://${normalized}` : `file:///${normalized}`;
+                    const blockDef: BlockDef = {
+                        meta: {
+                            view: "web",
+                            url: fileUrl,
+                            connection: "local",
+                        },
+                    };
+                    createBlock(blockDef, false, true);
                 } else {
                     model.goHistory(newFileName);
                 }
@@ -677,7 +686,16 @@ function DirectoryPreview({ model }: DirectoryPreviewProps) {
                 const isHtml = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
 
                 if (isHtml) {
-                    getApi().openNativePath(selectedPath);
+                    const normalized = selectedPath.replace(/\\/g, "/");
+                    const fileUrl = normalized.startsWith("/") ? `file://${normalized}` : `file:///${normalized}`;
+                    const blockDef: BlockDef = {
+                        meta: {
+                            view: "web",
+                            url: fileUrl,
+                            connection: "local",
+                        },
+                    };
+                    createBlock(blockDef, false, true);
                 } else {
                     model.goHistory(selectedPath);
                 }

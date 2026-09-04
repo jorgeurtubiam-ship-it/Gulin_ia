@@ -4,7 +4,8 @@
 import { CopyButton } from "@/app/element/copybutton";
 import { IconButton } from "@/app/element/iconbutton";
 import { cn, useAtomValueSafe, stringToBase64 } from "@/util/util";
-import { getFocusedBlockId, getAllBlockComponentModels, getBlockComponentModel, refocusNode, openLink, getApi, createBlock } from "@/app/store/global";
+import { getFocusedBlockId, getAllBlockComponentModels, getBlockComponentModel, refocusNode, openLink, getApi, createBlock, globalStore, WOS } from "@/app/store/global";
+import { getActiveTabModel } from "@/app/store/tab-model";
 import { TabRpcClient } from "@/app/store/wshrpcutil";
 import { RpcApi } from "@/app/store/wshclientapi";
 import type { Atom } from "jotai";
@@ -99,12 +100,58 @@ function getPathOrUrlInfo(rawText: string): { isLink: boolean; type: "url" | "fi
     return null;
 }
 
-export async function openPathInGulin(targetPath: string) {
-    if (!targetPath) return;
+export function getActiveCwd(): string {
+    try {
+        const tabModel = getActiveTabModel();
+        if (tabModel) {
+            const tabData = globalStore.get(tabModel.tabAtom);
+            if (tabData?.blockids) {
+                for (let i = tabData.blockids.length - 1; i >= 0; i--) {
+                    const blockId = tabData.blockids[i];
+                    const blockAtom = WOS.getGulinObjectAtom<Block>(`block:${blockId}`);
+                    const blockData = globalStore.get(blockAtom);
+                    if (blockData?.meta?.["cmd:cwd"]) {
+                        return blockData.meta["cmd:cwd"];
+                    }
+                    if (blockData?.meta?.view === "preview" && blockData?.meta?.file) {
+                        const f = blockData.meta.file;
+                        return f.endsWith("/") ? f.slice(0, -1) : f.substring(0, f.lastIndexOf("/")) || f;
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("Failed to get active cwd:", e);
+    }
+    return "";
+}
+
+export function resolveFullPath(targetPath: string): string {
+    if (!targetPath) return "";
     let cleanPath = targetPath.trim();
     if (cleanPath.startsWith("file://")) {
         cleanPath = decodeURIComponent(cleanPath.replace(/^file:\/\//, ""));
     }
+
+    if (cleanPath.startsWith("~/") || cleanPath === "~") {
+        const configDir = getApi().getConfigDir?.() || "";
+        const homeDir = configDir.endsWith("/.gulin") ? configDir.slice(0, -7) : "";
+        if (homeDir) {
+            cleanPath = cleanPath === "~" ? homeDir : homeDir + cleanPath.slice(1);
+        }
+    } else if (!cleanPath.startsWith("/") && !/^[a-zA-Z]:[/\\]/.test(cleanPath)) {
+        const cwd = getActiveCwd();
+        if (cwd) {
+            const baseCwd = cwd.endsWith("/") ? cwd : cwd + "/";
+            cleanPath = baseCwd + cleanPath.replace(/^\.\//, "");
+        }
+    }
+    return cleanPath;
+}
+
+export async function openPathInGulin(targetPath: string) {
+    if (!targetPath) return;
+    const cleanPath = resolveFullPath(targetPath);
 
     const lower = cleanPath.toLowerCase();
     const isHtmlFile =
@@ -115,13 +162,14 @@ export async function openPathInGulin(targetPath: string) {
         lower.endsWith(".mhtml");
 
     if (isHtmlFile) {
-        // Abrir archivos HTML directamente en el widget de navegador web integrado de Gulin
+        // Abrir archivos HTML directamente en el widget de navegador web integrado de Gulin con su ruta completa
         const normalized = cleanPath.replace(/\\/g, "/");
         const fileUrl = normalized.startsWith("/") ? `file://${normalized}` : `file:///${normalized}`;
         const blockDef: BlockDef = {
             meta: {
                 view: "web",
                 url: fileUrl,
+                connection: "local",
             },
         };
         await createBlock(blockDef, false, true);

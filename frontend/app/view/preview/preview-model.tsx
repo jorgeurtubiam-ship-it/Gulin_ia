@@ -710,7 +710,16 @@ export class PreviewModel implements ViewModel {
         const lower = (filePath || "").toLowerCase();
         const isHtml = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
         if (isHtml) {
-            getApi().openNativePath(filePath);
+            const normalized = filePath.replace(/\\/g, "/");
+            const fileUrl = normalized.startsWith("/") ? `file://${normalized}` : `file:///${normalized}`;
+            const blockDef: BlockDef = {
+                meta: {
+                    view: "web",
+                    url: fileUrl,
+                    connection: "local",
+                },
+            };
+            await createBlock(blockDef, false, true);
             return true;
         }
         const fileInfo = await globalStore.get(this.statFile);
