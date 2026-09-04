@@ -8,18 +8,18 @@ import { useEffect, useRef } from "react";
 import { debounce } from "throttle-debounce";
 
 function getOrCreateModel(value: string, path: string, language?: string) {
-    const uri = monaco.Uri.parse(`gulin://editor/${encodeURIComponent(path)}`);
+    const uri = monaco.Uri.parse(`gulin://editor/${encodeURIComponent(path || "untitled")}`);
     const existing = monaco.editor.getModel(uri);
     if (existing && !existing.isDisposed()) {
         if (value !== undefined && existing.getValue() !== value) {
-            existing.setValue(value);
+            existing.setValue(value ?? "");
         }
         if (language) {
             monaco.editor.setModelLanguage(existing, language);
         }
         return existing;
     }
-    return monaco.editor.createModel(value, language, uri);
+    return monaco.editor.createModel(value ?? "", language, uri);
 }
 
 type CodeEditorProps = {
@@ -37,6 +37,8 @@ export function MonacoCodeEditor({ text, readonly, language, onChange, onMount, 
     const editorRef = useRef<MonacoTypes.editor.IStandaloneCodeEditor | null>(null);
     const onUnmountRef = useRef<(() => void) | null>(null);
     const applyingFromProps = useRef(false);
+    const onChangeRef = useRef(onChange);
+    onChangeRef.current = onChange;
 
     useEffect(() => {
         loadMonaco();
@@ -46,59 +48,64 @@ export function MonacoCodeEditor({ text, readonly, language, onChange, onMount, 
 
         const model = getOrCreateModel(text, path, language);
 
-        let editor = editorRef.current;
-        if (!editor) {
-            editor = monaco.editor.create(el, {
-                ...options,
-                readOnly: readonly,
-                model,
-            });
-            editorRef.current = editor;
+        const editor = monaco.editor.create(el, {
+            ...options,
+            readOnly: readonly,
+            model,
+            automaticLayout: true,
+        });
+        editorRef.current = editor;
 
-            if (onMount) {
-                onUnmountRef.current = onMount(editor, monaco);
+        const sub = editor.onDidChangeModelContent(() => {
+            if (applyingFromProps.current) return;
+            const currentModel = editor.getModel();
+            if (currentModel) {
+                onChangeRef.current?.(currentModel.getValue());
             }
-        } else {
-            editor.setModel(model);
+        });
+
+        if (onMount) {
+            onUnmountRef.current = onMount(editor, monaco);
         }
 
-        const sub = model.onDidChangeContent(() => {
-            if (applyingFromProps.current) return;
-            onChange?.(model.getValue());
+        const debouncedLayout = debounce(50, () => {
+            if (editorRef.current) {
+                editorRef.current.layout();
+            }
+        });
+        const resizeObserver = new ResizeObserver(debouncedLayout);
+        resizeObserver.observe(el);
+
+        requestAnimationFrame(() => {
+            if (editorRef.current) {
+                editorRef.current.layout();
+            }
         });
 
         return () => {
+            resizeObserver.disconnect();
+            debouncedLayout.cancel();
             sub.dispose();
             if (onUnmountRef.current) {
                 onUnmountRef.current();
                 onUnmountRef.current = null;
             }
-            if (editorRef.current) {
-                editorRef.current.dispose();
-                editorRef.current = null;
-            }
-            if (model && !model.isDisposed()) {
-                model.dispose();
-            }
-        };
-    }, [path]);
-
-    useEffect(() => {
-        const editor = editorRef.current;
-        const el = divRef.current;
-        if (!editor || !el) return;
-
-        const debouncedLayout = debounce(100, () => {
-            editor.layout();
-        });
-        const resizeObserver = new ResizeObserver(debouncedLayout);
-        resizeObserver.observe(el);
-
-        return () => {
-            resizeObserver.disconnect();
-            debouncedLayout.cancel();
+            editor.dispose();
+            editorRef.current = null;
         };
     }, []);
+
+    // Switch model when path changes
+    useEffect(() => {
+        const editor = editorRef.current;
+        if (!editor) return;
+
+        const model = getOrCreateModel(text, path, language);
+        if (editor.getModel() !== model) {
+            editor.setModel(model);
+        }
+        editor.layout();
+    }, [path]);
 
     // Keep model value in sync with props
     useEffect(() => {
