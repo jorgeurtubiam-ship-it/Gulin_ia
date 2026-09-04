@@ -17,6 +17,7 @@ import {
 import { WOS, globalStore } from "@/store/global";
 import { adaptFromReactOrNativeKeyEvent, checkKeyPressed } from "@/util/keyutil";
 import { fireAndForget, useAtomValueSafe } from "@/util/util";
+import { formatFileUrl } from "@/util/pathutil";
 import clsx from "clsx";
 import { WebviewTag } from "electron";
 import { Atom, PrimitiveAtom, atom, useAtomValue, useSetAtom } from "jotai";
@@ -391,8 +392,7 @@ export class WebViewModel implements ViewModel {
                 ],
             });
             if (filePath) {
-                const normalizedPath = filePath.replace(/\\/g, "/");
-                const fileUrl = normalizedPath.startsWith("/") ? `file://${normalizedPath}` : `file:///${normalizedPath}`;
+                const fileUrl = formatFileUrl(filePath);
                 this.loadUrl(fileUrl, "file-dialog");
             }
         } catch (e) {
@@ -409,9 +409,9 @@ export class WebViewModel implements ViewModel {
             return url;
         }
 
-        // 1. File protocol: file:///path or file://path
+        // 1. File protocol: file:///path or file://path or file:///~/path
         if (/^file:\/\//i.test(url)) {
-            return url;
+            return formatFileUrl(url);
         }
 
         // 2. HTTP / HTTPS protocol
@@ -426,37 +426,29 @@ export class WebViewModel implements ViewModel {
 
         // 4. Handle home directory path (~/... or ~)
         if (url.startsWith("~/") || url === "~") {
-            try {
-                const homeDir = getApi().getHomeDir();
-                if (homeDir) {
-                    const resolved = url === "~" ? homeDir : `${homeDir}/${url.slice(2)}`;
-                    return `file://${resolved.replace(/\\/g, "/")}`;
-                }
-            } catch (_) {}
+            return formatFileUrl(url);
         }
 
         // 5. Absolute Unix path (/Users/..., /home/..., /tmp/..., etc.)
         if (url.startsWith("/")) {
-            return `file://${url}`;
+            return formatFileUrl(url);
         }
 
         // 6. Windows absolute path (C:\..., D:/...)
         if (/^[a-zA-Z]:[\\/]/.test(url)) {
-            const normalized = url.replace(/\\/g, "/");
-            return `file:///${normalized}`;
+            return formatFileUrl(url);
         }
 
         // 7. Relative file path (./..., ../..., .\..., ..\...)
         if (url.startsWith("./") || url.startsWith("../") || url.startsWith(".\\") || url.startsWith("..\\")) {
-            const cleanPath = url.replace(/\\/g, "/");
-            return `file://${cleanPath}`;
+            return formatFileUrl(url);
         }
 
         // 8. Direct HTML/Web file extensions (e.g. index.html, test.htm, app.svg, report.xhtml)
         const webExtRegex = /\.(html|htm|xhtml|svg|xml|mhtml|pdf)$/i;
         if (webExtRegex.test(url) && !url.includes("://")) {
             if (!url.includes("/") && !url.includes("\\")) {
-                return `file://${url}`;
+                return formatFileUrl(url);
             }
         }
 

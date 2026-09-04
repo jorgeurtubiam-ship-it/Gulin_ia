@@ -10,6 +10,7 @@ import { PLATFORM, PlatformMacOS } from "@/util/platformutil";
 import { addOpenMenuItems } from "@/util/previewutil";
 import { fireAndForget } from "@/util/util";
 import { formatRemoteUri } from "@/util/gulinutil";
+import { formatFileUrl } from "@/util/pathutil";
 import { offset, useDismiss, useFloating, useInteractions } from "@floating-ui/react";
 import {
     Header,
@@ -537,8 +538,7 @@ const TableRow = React.forwardRef(function ({
                 const isHtml = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
 
                 if (isHtml) {
-                    const normalized = newFileName.replace(/\\/g, "/");
-                    const fileUrl = normalized.startsWith("/") ? `file://${normalized}` : `file:///${normalized}`;
+                    const fileUrl = formatFileUrl(newFileName);
                     const blockDef: BlockDef = {
                         meta: {
                             view: "web",
@@ -686,8 +686,7 @@ function DirectoryPreview({ model }: DirectoryPreviewProps) {
                 const isHtml = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
 
                 if (isHtml) {
-                    const normalized = selectedPath.replace(/\\/g, "/");
-                    const fileUrl = normalized.startsWith("/") ? `file://${normalized}` : `file:///${normalized}`;
+                    const fileUrl = formatFileUrl(selectedPath);
                     const blockDef: BlockDef = {
                         meta: {
                             view: "web",

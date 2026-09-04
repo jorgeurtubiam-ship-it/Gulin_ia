@@ -2,6 +2,7 @@ import { createBlock, getApi } from "@/app/store/global";
 import { makeNativeLabel } from "./platformutil";
 import { fireAndForget } from "./util";
 import { formatRemoteUri } from "./gulinutil";
+import { formatFileUrl } from "./pathutil";
 
 export function addOpenMenuItems(menu: ContextMenuItem[], conn: string, finfo: FileInfo): ContextMenuItem[] {
     if (!finfo) {
@@ -55,8 +56,7 @@ export function addOpenMenuItems(menu: ContextMenuItem[], conn: string, finfo: F
                 label: "Open in Web Browser",
                 click: () =>
                     fireAndForget(async () => {
-                        const normalizedPath = finfo.path.replace(/\\/g, "/");
-                        const fileUrl = normalizedPath.startsWith("/") ? `file://${normalizedPath}` : `file:///${normalizedPath}`;
+                        const fileUrl = formatFileUrl(finfo.path);
                         const blockDef: BlockDef = {
                             meta: {
                                 view: "web",
