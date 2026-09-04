@@ -93,8 +93,8 @@ export function CodeEditor({ blockId, text, language, fileName, readonly, onChan
     }, [minimapEnabled, stickyScrollEnabled, wordWrap, fontSize, readonly]);
 
     return (
-        <div className="flex flex-col w-full h-full overflow-hidden items-center justify-center">
-            <div className="flex flex-col h-full w-full" ref={divRef}>
+        <div className="flex flex-col w-full h-full flex-1 overflow-hidden items-center justify-center">
+            <div className="flex flex-col h-full w-full flex-1" ref={divRef}>
                 <MonacoCodeEditor
                     readonly={readonly}
                     text={text}

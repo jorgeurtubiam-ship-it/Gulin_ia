@@ -81,8 +81,20 @@ export function MonacoCodeEditor({ text, readonly, language, onChange, onMount, 
                 editorRef.current.layout();
             }
         });
+        const timer1 = setTimeout(() => {
+            if (editorRef.current) {
+                editorRef.current.layout();
+            }
+        }, 50);
+        const timer2 = setTimeout(() => {
+            if (editorRef.current) {
+                editorRef.current.layout();
+            }
+        }, 200);
 
         return () => {
+            clearTimeout(timer1);
+            clearTimeout(timer2);
             resizeObserver.disconnect();
             debouncedLayout.cancel();
             sub.dispose();
@@ -138,7 +150,7 @@ export function MonacoCodeEditor({ text, readonly, language, onChange, onMount, 
         monaco.editor.setModelLanguage(model, language);
     }, [language]);
 
-    return <div className="flex flex-col h-full w-full" ref={divRef} />;
+    return <div className="flex flex-col h-full w-full flex-1 min-h-0" ref={divRef} style={{ width: "100%", height: "100%", flex: 1 }} />;
 }
 
 type DiffViewerProps = {

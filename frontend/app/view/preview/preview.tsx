@@ -60,7 +60,11 @@ const SpecializedView = memo(({ parentRef, model }: SpecializedViewProps) => {
     if (!SpecializedViewComponent) {
         return <CenteredDiv>Invalid Specialized View Component ({specializedView.specializedView})</CenteredDiv>;
     }
-    return <SpecializedViewComponent key={path} model={model} parentRef={parentRef} />;
+    return (
+        <div className="flex flex-col w-full h-full flex-1 overflow-hidden">
+            <SpecializedViewComponent key={path} model={model} parentRef={parentRef} />
+        </div>
+    );
 });
 
 const fetchSuggestions = async (
@@ -145,9 +149,9 @@ function PreviewView({
 
     return (
         <>
-            <div key="fullpreview" className="flex flex-col w-full overflow-hidden scrollbar-hide-until-hover">
+            <div key="fullpreview" className="flex flex-col w-full h-full flex-1 overflow-hidden scrollbar-hide-until-hover">
                 {errorMsg && <ErrorOverlay errorMsg={errorMsg} resetOverlay={() => setErrorMsg(null)} />}
-                <div ref={contentRef} className="flex-grow overflow-hidden">
+                <div ref={contentRef} className="flex-grow flex flex-col w-full h-full flex-1 overflow-hidden">
                     <SpecializedView parentRef={contentRef} model={model} />
                 </div>
             </div>
