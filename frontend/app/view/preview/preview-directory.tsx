@@ -533,7 +533,14 @@ const TableRow = React.forwardRef(function ({
             data-rowindex={idx}
             onDoubleClick={() => {
                 const newFileName = row.getValue("path") as string;
-                model.goHistory(newFileName);
+                const lower = (newFileName || "").toLowerCase();
+                const isHtml = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
+
+                if (isHtml) {
+                    getApi().openNativePath(newFileName);
+                } else {
+                    model.goHistory(newFileName);
+                }
                 setSearch("");
                 globalStore.set(model.directorySearchActive, false);
             }}
@@ -666,7 +673,14 @@ function DirectoryPreview({ model }: DirectoryPreviewProps) {
                 if (filteredData.length == 0) {
                     return;
                 }
-                model.goHistory(selectedPath);
+                const lower = (selectedPath || "").toLowerCase();
+                const isHtml = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
+
+                if (isHtml) {
+                    getApi().openNativePath(selectedPath);
+                } else {
+                    model.goHistory(selectedPath);
+                }
                 setSearchText("");
                 globalStore.set(model.directorySearchActive, false);
                 return true;

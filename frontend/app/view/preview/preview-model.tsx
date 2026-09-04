@@ -706,8 +706,14 @@ export class PreviewModel implements ViewModel {
     }
 
     async handleOpenFile(filePath: string) {
-        const fileInfo = await globalStore.get(this.statFile);
         this.updateOpenFileModalAndError(false);
+        const lower = (filePath || "").toLowerCase();
+        const isHtml = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
+        if (isHtml) {
+            getApi().openNativePath(filePath);
+            return true;
+        }
+        const fileInfo = await globalStore.get(this.statFile);
         if (fileInfo == null) {
             return true;
         }
