@@ -423,7 +423,8 @@ export class PreviewModel implements ViewModel {
             return isBlank(connName) ? "local" : connName;
         });
         this.connectionImmediate = atom<string>((get) => {
-            return get(this.blockAtom)?.meta?.connection;
+            const connName = get(this.blockAtom)?.meta?.connection;
+            return isBlank(connName) ? "local" : connName;
         });
         this.statFile = atom<Promise<FileInfo>>(async (get) => {
             const fileName = get(this.metaFilePath);
@@ -508,7 +509,7 @@ export class PreviewModel implements ViewModel {
         this.connStatus = atom((get) => {
             const blockData = get(this.blockAtom);
             const connName = blockData?.meta?.connection;
-            const connAtom = getConnStatusAtom(connName);
+            const connAtom = getConnStatusAtom(isBlank(connName) ? "local" : connName);
             return get(connAtom);
         });
 

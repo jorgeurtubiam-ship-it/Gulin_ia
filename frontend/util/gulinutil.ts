@@ -90,6 +90,18 @@ export function computeBgStyleFromMeta(meta: MetaType, defaultOpacity: number = 
 }
 
 export function formatRemoteUri(path: string, connection: string): string {
+    if (isBlank(path)) {
+        return "";
+    }
+    if (path.startsWith("wsh://")) {
+        return path;
+    }
+    if (path.startsWith("file://")) {
+        path = decodeURIComponent(path.replace(/^file:\/\//, ""));
+    }
     connection = isBlank(connection) ? "local" : connection;
+    if (path.startsWith("/")) {
+        return `wsh://${connection}${path}`;
+    }
     return `wsh://${connection}/${path}`;
 }

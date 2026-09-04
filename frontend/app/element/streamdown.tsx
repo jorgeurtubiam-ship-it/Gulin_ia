@@ -107,11 +107,24 @@ export async function openPathInGulin(targetPath: string) {
     }
 
     const lower = cleanPath.toLowerCase();
-    const isHtmlFile = lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml");
+    const isHtmlFile =
+        lower.endsWith(".html") ||
+        lower.endsWith(".htm") ||
+        lower.endsWith(".xhtml") ||
+        lower.endsWith(".svg") ||
+        lower.endsWith(".mhtml");
 
     if (isHtmlFile) {
-        // Los reportes y archivos HTML se abren directamente en el navegador del sistema
-        getApi().openNativePath(cleanPath);
+        // Abrir archivos HTML directamente en el widget de navegador web integrado de Gulin
+        const normalized = cleanPath.replace(/\\/g, "/");
+        const fileUrl = normalized.startsWith("/") ? `file://${normalized}` : `file:///${normalized}`;
+        const blockDef: BlockDef = {
+            meta: {
+                view: "web",
+                url: fileUrl,
+            },
+        };
+        await createBlock(blockDef, false, true);
         return;
     }
 

@@ -530,7 +530,20 @@ function getLocalHostDisplayNameAtom(): Atom<string> {
  * @param forceOpenInternally Force the link to open in a new web widget.
  */
 async function openLink(uri: string, forceOpenInternally = false) {
-    if (forceOpenInternally || globalStore.get(atoms.settingsAtom)?.["web:openlinksinternally"]) {
+    if (!uri) return;
+    const lowerUri = uri.toLowerCase();
+    const isHtmlOrWebFile =
+        lowerUri.startsWith("file://") ||
+        lowerUri.endsWith(".html") ||
+        lowerUri.endsWith(".htm") ||
+        lowerUri.endsWith(".xhtml") ||
+        lowerUri.endsWith(".svg") ||
+        lowerUri.includes(".html#") ||
+        lowerUri.includes(".html?") ||
+        lowerUri.includes(".htm#") ||
+        lowerUri.includes(".htm?");
+
+    if (forceOpenInternally || isHtmlOrWebFile || globalStore.get(atoms.settingsAtom)?.["web:openlinksinternally"]) {
         const blockDef: BlockDef = {
             meta: {
                 view: "web",

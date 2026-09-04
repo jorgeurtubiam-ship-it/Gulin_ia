@@ -7,8 +7,18 @@ import * as monaco from "monaco-editor";
 import { useEffect, useRef } from "react";
 import { debounce } from "throttle-debounce";
 
-function createModel(value: string, path: string, language?: string) {
+function getOrCreateModel(value: string, path: string, language?: string) {
     const uri = monaco.Uri.parse(`gulin://editor/${encodeURIComponent(path)}`);
+    const existing = monaco.editor.getModel(uri);
+    if (existing && !existing.isDisposed()) {
+        if (value !== undefined && existing.getValue() !== value) {
+            existing.setValue(value);
+        }
+        if (language) {
+            monaco.editor.setModelLanguage(existing, language);
+        }
+        return existing;
+    }
     return monaco.editor.createModel(value, language, uri);
 }
 
@@ -34,35 +44,44 @@ export function MonacoCodeEditor({ text, readonly, language, onChange, onMount, 
         const el = divRef.current;
         if (!el) return;
 
-        const model = createModel(text, path, language);
-        console.log("[monaco] CREATE MODEL", path, model);
+        const model = getOrCreateModel(text, path, language);
 
-        const editor = monaco.editor.create(el, {
-            ...options,
-            readOnly: readonly,
-            model,
-        });
-        editorRef.current = editor;
+        let editor = editorRef.current;
+        if (!editor) {
+            editor = monaco.editor.create(el, {
+                ...options,
+                readOnly: readonly,
+                model,
+            });
+            editorRef.current = editor;
+
+            if (onMount) {
+                onUnmountRef.current = onMount(editor, monaco);
+            }
+        } else {
+            editor.setModel(model);
+        }
 
         const sub = model.onDidChangeContent(() => {
             if (applyingFromProps.current) return;
             onChange?.(model.getValue());
         });
 
-        if (onMount) {
-            onUnmountRef.current = onMount(editor, monaco);
-        }
-
         return () => {
             sub.dispose();
-            if (onUnmountRef.current) onUnmountRef.current();
-            editor.dispose();
-            model.dispose();
-            console.log("[monaco] dispose model");
-            editorRef.current = null;
+            if (onUnmountRef.current) {
+                onUnmountRef.current();
+                onUnmountRef.current = null;
+            }
+            if (editorRef.current) {
+                editorRef.current.dispose();
+                editorRef.current = null;
+            }
+            if (model && !model.isDisposed()) {
+                model.dispose();
+            }
         };
-        // mount/unmount only
-    }, []);
+    }, [path]);
 
     useEffect(() => {
         const editor = editorRef.current;
