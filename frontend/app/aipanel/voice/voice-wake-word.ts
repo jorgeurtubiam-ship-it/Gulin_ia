@@ -297,7 +297,7 @@ export class VoiceWakeWordService {
 
                 const finalCmd = (cleanCommand || transcript).replace(/^[,.:;! ]+/, "").trim();
 
-                if (finalCmd.length > 2) {
+                if (finalCmd.length > 2 && !VoiceService.isWhisperHallucination(finalCmd)) {
                     this.playWakeSound();
                     globalStore.set(lastQueryWasVoiceAtom, true);
                     globalStore.set(finalTranscriptAtom, finalCmd);

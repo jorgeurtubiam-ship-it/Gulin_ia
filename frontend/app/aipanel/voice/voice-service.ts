@@ -25,6 +25,7 @@ export class VoiceService {
     private analyser: AnalyserNode | null = null;
     private animationFrameId: number | null = null;
     private timerIntervalId: any = null;
+    private recordingStartTime: number = 0;
     private isRecording: boolean = false;
     private onTranscriptReadyCallback: ((text: string) => void) | null = null;
 
@@ -83,11 +84,25 @@ export class VoiceService {
             globalStore.set(voiceStateAtom, "recording");
             this.playTone(440, 0.08, "sine");
 
-            let seconds = 0;
+            this.recordingStartTime = Date.now();
+            globalStore.set(recordingDurationAtom, 0);
+
+            if (this.timerIntervalId) {
+                clearInterval(this.timerIntervalId);
+                this.timerIntervalId = null;
+            }
+
             this.timerIntervalId = setInterval(() => {
-                seconds++;
-                globalStore.set(recordingDurationAtom, seconds);
-            }, 1000);
+                if (!this.isRecording) {
+                    if (this.timerIntervalId) {
+                        clearInterval(this.timerIntervalId);
+                        this.timerIntervalId = null;
+                    }
+                    return;
+                }
+                const elapsedSeconds = Math.max(0, Math.floor((Date.now() - this.recordingStartTime) / 1000));
+                globalStore.set(recordingDurationAtom, elapsedSeconds);
+            }, 200);
 
             return true;
         } catch (err) {
@@ -99,7 +114,7 @@ export class VoiceService {
     }
 
     /**
-     * Detiene la grabación, envía el audio a Google Gemini directamente y ejecuta el comando
+     * Detiene la grabación, transcribe el audio y ejecuta el comando
      */
     public async stopAndSubmit(): Promise<string> {
         if (!this.isRecording) return "";
@@ -137,127 +152,63 @@ export class VoiceService {
 
         if (recordedBlob && recordedBlob.size > 200) {
             try {
-                const aiConfigs = globalStore.get(GulinAIModel.getInstance().aiModeConfigs) || {};
-
-                // 1. Transcribir con Whisper (OpenAI)
-                let openAiKey = "";
-                for (const [k, v] of Object.entries(aiConfigs)) {
-                    if ((v as any)["ai:provider"] === "openai" || k.includes("openai")) {
-                        if ((v as any)["ai:apitoken"]) {
-                            openAiKey = (v as any)["ai:apitoken"];
-                            break;
-                        }
-                    }
-                }
-
-                if (openAiKey) {
-                    globalStore.set(interimTranscriptAtom, "Transcribiendo con Whisper...");
+                // 1. Intentar primero con el transcriptor local nativo de macOS (Speech.framework / transcribe.swift - $0 tokens)
+                const api = (window as any).api;
+                if (api && typeof api.voiceTranscribeLocal === "function") {
                     try {
-                        const formData = new FormData();
-                        const isWebm = recordedBlob.type?.includes("webm") || !recordedBlob.type?.includes("mp4");
-                        const ext = isWebm ? "webm" : "mp4";
-                        const mime = isWebm ? "audio/webm" : "audio/mp4";
-                        const cleanBlob = new Blob(this.audioChunks, { type: mime });
-                        formData.append("file", cleanBlob, `audio.${ext}`);
-                        formData.append("model", "whisper-1");
-                        formData.append("language", "es");
-
-                        const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-                            method: "POST",
-                            headers: {
-                                Authorization: `Bearer ${openAiKey}`,
-                            },
-                            body: formData,
-                        });
-
-                        if (resp.ok) {
-                            const data = await resp.json();
-                            if (data && data.text) {
-                                finalResult = data.text.trim();
-                            }
-                        } else {
-                            const err = await resp.text();
-                            console.warn("Whisper OpenAI STT status:", resp.status, err);
+                        const base64Audio = await this.blobToBase64(recordedBlob);
+                        const localRes = await api.voiceTranscribeLocal(base64Audio, recordedBlob.type || "audio/webm");
+                        if (localRes?.success && localRes?.transcript) {
+                            finalResult = localRes.transcript.trim();
                         }
-                    } catch (err) {
-                        console.warn("Error conectando con Whisper:", err);
+                    } catch (e) {
+                        console.warn("Fallo transcriptor local, usando fallback:", e);
                     }
                 }
 
-                // 2. Fallback a Google Gemini si no hay resultado
+                // 2. Fallback a Whisper (OpenAI) solo si el motor local no devolvió texto
                 if (!finalResult) {
-                    let foundApiKey = "";
-                    let selectedGoogleModel = globalStore.get(googleAudioModelAtom) || "gemini-2.5-flash";
-
+                    const aiConfigs = globalStore.get(GulinAIModel.getInstance().aiModeConfigs) || {};
+                    let openAiKey = "";
                     for (const [k, v] of Object.entries(aiConfigs)) {
-                        if ((v as any)["ai:provider"] === "google" || k.includes("gemini")) {
+                        if ((v as any)["ai:provider"] === "openai" || k.includes("openai")) {
                             if ((v as any)["ai:apitoken"]) {
-                                foundApiKey = (v as any)["ai:apitoken"];
+                                openAiKey = (v as any)["ai:apitoken"];
+                                break;
                             }
-                            if ((v as any)["ai:model"]) {
-                                selectedGoogleModel = (v as any)["ai:model"];
-                            }
-                            break;
                         }
                     }
 
-                    if (foundApiKey) {
-                        const base64Audio = await this.blobToBase64(recordedBlob);
-                        const modelsToTry = [
-                            selectedGoogleModel || "gemini-2.5-flash",
-                            "gemini-2.5-flash",
-                            "gemini-1.5-flash",
-                        ];
-                        const uniqueModels = Array.from(new Set(modelsToTry));
+                    if (openAiKey) {
+                        try {
+                            const formData = new FormData();
+                            const isWebm = recordedBlob.type?.includes("webm") || !recordedBlob.type?.includes("mp4");
+                            const ext = isWebm ? "webm" : "mp4";
+                            const mime = isWebm ? "audio/webm" : "audio/mp4";
+                            const cleanBlob = new Blob(this.audioChunks, { type: mime });
+                            formData.append("file", cleanBlob, `audio.${ext}`);
+                            formData.append("model", "whisper-1");
+                            formData.append("language", "es");
 
-                        for (const modelToUse of uniqueModels) {
-                            try {
-                                globalStore.set(interimTranscriptAtom, `Procesando con ${modelToUse}...`);
-                                const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent`;
-                                const payload = {
-                                    contents: [
-                                        {
-                                            parts: [
-                                                {
-                                                    inlineData: {
-                                                        mimeType: recordedBlob.type || "audio/webm",
-                                                        data: base64Audio,
-                                                    },
-                                                },
-                                                {
-                                                    text: "Transcribe this audio verbatim in its original language. Output ONLY the plain transcription text without commentary, markdown, or quotation marks.",
-                                                },
-                                            ],
-                                        },
-                                    ],
-                                };
+                            const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+                                method: "POST",
+                                headers: {
+                                    Authorization: `Bearer ${openAiKey}`,
+                                },
+                                body: formData,
+                            });
 
-                                const requestHeaders: Record<string, string> = {
-                                    "Content-Type": "application/json",
-                                };
-                                if (foundApiKey.startsWith("AQ.") || foundApiKey.startsWith("ya29.")) {
-                                    requestHeaders["Authorization"] = `Bearer ${foundApiKey}`;
-                                    requestHeaders["x-goog-api-key"] = foundApiKey;
-                                } else {
-                                    requestHeaders["x-goog-api-key"] = foundApiKey;
+                            if (resp.ok) {
+                                const data = await resp.json();
+                                if (data && data.text) {
+                                    finalResult = data.text.trim();
                                 }
-
-                                const response = await fetch(endpoint, {
-                                    method: "POST",
-                                    headers: requestHeaders,
-                                    body: JSON.stringify(payload),
-                                });
-
-                                if (response.ok) {
-                                    const data = await response.json();
-                                    if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-                                        finalResult = data.candidates[0].content.parts[0].text.trim();
-                                        break;
-                                    }
-                                }
-                            } catch (e) {
-                                console.warn(`Error probando modelo ${modelToUse}:`, e);
+                            } else {
+                                const err = await resp.text();
+                                console.warn("Whisper OpenAI STT status:", resp.status, err);
                             }
+                        } catch (err) {
+                            console.warn("Error conectando con Whisper fallback:", err);
                         }
                     }
                 }
@@ -266,15 +217,62 @@ export class VoiceService {
             }
         }
 
+        // Filtrar alucinaciones de Whisper cuando hay silencio o audio vacío
+        if (finalResult && VoiceService.isWhisperHallucination(finalResult)) {
+            console.warn("Alucinación de Whisper descartada:", finalResult);
+            finalResult = "";
+        }
+
         globalStore.set(interimTranscriptAtom, "");
         globalStore.set(finalTranscriptAtom, finalResult);
         globalStore.set(voiceStateAtom, "idle");
 
-        if (this.onTranscriptReadyCallback && finalResult) {
+        if (this.onTranscriptReadyCallback && finalResult && finalResult.trim().length > 0) {
             this.onTranscriptReadyCallback(finalResult);
         }
 
         return finalResult;
+    }
+
+    public static isWhisperHallucination(text: string): boolean {
+        if (!text || !text.trim()) return true;
+        const lower = text.toLowerCase().trim();
+        const hallucinations = [
+            "amara.org",
+            "amara",
+            "subtítulos realizados",
+            "subtitulos realizados",
+            "subtítulo realizado",
+            "subtitulo realizado",
+            "comunidad de amara",
+            "sous-titres",
+            "subtitles by",
+            "translated by",
+            "thank you for watching",
+            "thanks for watching",
+            "gracias por ver",
+            "suscríbete a mi canal",
+            "suscribete a mi canal",
+            "suscríbete al canal",
+            "suscribete al canal",
+            "suscríbete",
+            "suscribete",
+            "¡suscríbete!",
+            "like y suscríbete",
+            "hasta la próxima",
+            "hasta la proxima",
+            "bye bye",
+            "mbc 뉴스",
+            "un subtítulo",
+        ];
+        for (const h of hallucinations) {
+            if (lower.includes(h)) return true;
+        }
+        const alphaNumericOnly = lower.replace(/[^a-záéíóúüñ0-9]/gi, "").trim();
+        if (alphaNumericOnly.length < 2) {
+            return true;
+        }
+        return false;
     }
 
     public cancelRecording() {

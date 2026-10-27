@@ -23,10 +23,11 @@ export const VoiceRecordButton: React.FC<VoiceRecordButtonProps> = memo(({ onSpe
     const voiceService = VoiceService.getInstance();
     const isRecording = voiceState === "recording";
 
-    // Formatear segundos en formato mm:ss
+    // Formatear segundos en formato mm:ss con protección contra NaN y valores negativos
     const formatTime = (seconds: number) => {
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
+        const safeSecs = Math.max(0, Math.floor(Number(seconds) || 0));
+        const mins = Math.floor(safeSecs / 60);
+        const secs = safeSecs % 60;
         return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
     };
 
