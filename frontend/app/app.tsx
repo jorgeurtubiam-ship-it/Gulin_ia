@@ -13,6 +13,7 @@ import {
     getSettingsPrefixAtom,
     getTabIndicatorAtom,
     globalStore,
+    WOS,
 } from "@/store/global";
 import { appHandleKeyDown, keyboardMouseDownHandler } from "@/store/keymodel";
 import { getElemAsStr } from "@/util/focusutil";
@@ -45,10 +46,29 @@ const App = ({ onFirstRender }: { onFirstRender: () => void }) => {
     return (
         <Provider store={globalStore}>
             <TabModelContext.Provider value={getTabModelByTabId(tabId)}>
+                <AppGulinObjCacheCleaner />
                 <AppInner />
             </TabModelContext.Provider>
         </Provider>
     );
+};
+
+// Periodic GC of the gulinObjectValueCache to release memory for tabs that
+// are no longer in the foreground. Without this, with many tabs, hundreds of
+// wov entries and event subscriptions accumulate, causing re-renders and the
+// "white screen" freeze.
+const AppGulinObjCacheCleaner = () => {
+    useEffect(() => {
+        const interval = setInterval(() => {
+            try {
+                WOS.cleanGulinObjectCache();
+            } catch (e) {
+                dlog("cleanGulinObjectCache error", e);
+            }
+        }, 30000); // every 30s
+        return () => clearInterval(interval);
+    }, []);
+    return null;
 };
 
 function isContentEditableBeingEdited(): boolean {

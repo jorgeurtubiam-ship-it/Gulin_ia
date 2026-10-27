@@ -9,8 +9,13 @@ import { fetch } from "@/util/fetchutil";
 import { fireAndForget } from "@/util/util";
 import { atom, Atom, Getter, PrimitiveAtom, Setter, useAtomValue } from "jotai";
 import { useEffect } from "react";
+import debug from "debug";
 import { globalStore } from "./jotaiStore";
 import { ObjectService } from "./services";
+
+const wosLog = debug("gulin:wos");
+const wosSvcLog = debug("gulin:wos:service");
+const wosObjLog = debug("gulin:wos:object");
 
 type GulinObjectDataItemType<T extends GulinObj> = {
     value: T;
@@ -64,18 +69,18 @@ function GetObject<T>(oref: string): Promise<T> {
 function debugLogBackendCall(methodName: string, durationStr: string, args: any[]) {
     durationStr = "| " + durationStr;
     if (methodName == "object.UpdateObject" && args.length > 0) {
-        console.log("[service] object.UpdateObject", args[0].otype, args[0].oid, durationStr, args[0]);
+        wosSvcLog("object.UpdateObject", args[0].otype, args[0].oid, durationStr);
         return;
     }
     if (methodName == "object.GetObject" && args.length > 0) {
-        console.log("[service] object.GetObject", args[0], durationStr);
+        wosSvcLog("object.GetObject", args[0], durationStr);
         return;
     }
     if (methodName == "file.StatFile" && args.length >= 2) {
-        console.log("[service] file.StatFile", args[1], durationStr);
+        wosSvcLog("file.StatFile", args[1], durationStr);
         return;
     }
-    console.log("[service]", methodName, durationStr);
+    wosSvcLog(methodName, durationStr);
 }
 
 function wpsSubscribeToObject(oref: string): () => void {
@@ -140,7 +145,7 @@ function clearGulinObjectCache() {
     gulinObjectValueCache.clear();
 }
 
-const defaultHoldTime = 5000; // 5-seconds
+const defaultHoldTime = 2000; // 2-seconds (was 5s; reduced to release memory faster with many tabs)
 
 function reloadGulinObject<T extends GulinObj>(oref: string): Promise<T> {
     let wov = gulinObjectValueCache.get(oref);
@@ -179,7 +184,7 @@ function createGulinValueObject<T extends GulinObj>(oref: string, shouldFetch: b
         }
         wov.pendingPromise = null;
         globalStore.set(wov.dataAtom, { value: val, loading: false });
-        console.log("GulinObj resolved", oref, Date.now() - startTs + "ms");
+        wosObjLog("GulinObj resolved", oref, Date.now() - startTs + "ms");
     });
     return wov;
 }
@@ -243,18 +248,18 @@ function updateGulinObject(update: GulinObjUpdate) {
     const oref = makeORef(update.otype, update.oid);
     const wov = getGulinObjectValue(oref);
     if (update.updatetype == "delete") {
-        console.log("GulinObj deleted", oref);
+        wosObjLog("GulinObj deleted", oref);
         globalStore.set(wov.dataAtom, { value: null, loading: false });
     } else {
         if (!isValidGulinObj(update.obj)) {
-            console.log("invalid gulin object update", update);
+            wosObjLog("invalid gulin object update", update);
             return;
         }
         const curValue: GulinObjectDataItemType<GulinObj> = globalStore.get(wov.dataAtom);
         if (curValue.value != null && curValue.value.version >= update.obj.version) {
             return;
         }
-        console.log("GulinObj updated", oref);
+        wosObjLog("GulinObj updated", oref);
         globalStore.set(wov.dataAtom, { value: update.obj, loading: false });
     }
     wov.holdTime = Date.now() + defaultHoldTime;
@@ -269,10 +274,15 @@ function updateGulinObjects(vals: GulinObjUpdate[]) {
 
 function cleanGulinObjectCache() {
     const now = Date.now();
+    let removed = 0;
     for (const [oref, wov] of gulinObjectValueCache) {
         if (wov.refCount == 0 && wov.holdTime < now) {
             gulinObjectValueCache.delete(oref);
+            removed++;
         }
+    }
+    if (removed > 0) {
+        wosLog("cleanGulinObjectCache removed", removed, "entries, remaining:", gulinObjectValueCache.size);
     }
 }
 
