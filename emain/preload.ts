@@ -79,6 +79,25 @@ contextBridge.exposeInMainWorld("api", {
         ipcRenderer.invoke("gulin-voice-transcribe-local", { audioBase64, mimeType }),
     nativeSpeak: (text: string) => ipcRenderer.invoke("gulin-native-tts-say", text),
     nativeStopSpeak: () => ipcRenderer.invoke("gulin-native-tts-stop"),
+    captureWebviewPage: (webContentsId: number) => ipcRenderer.invoke("webview-capture-page", webContentsId),
+    webviewSendInput: (webContentsId: number, inputEvent: any) =>
+        ipcRenderer.invoke("webview-send-input", webContentsId, inputEvent),
+    enableWebviewDownloads: (webContentsId: number) => ipcRenderer.send("webview-enable-downloads", webContentsId),
+    openDownloadFile: (filePath: string) => ipcRenderer.send("open-download-file", filePath),
+    showDownloadInFinder: (filePath: string) => ipcRenderer.send("show-download-in-finder", filePath),
+    toggleAdblock: (enabled: boolean) => ipcRenderer.invoke("toggle-adblock", enabled),
+    saveWebSession: (sessionData: any) => ipcRenderer.invoke("save-web-session", sessionData),
+    loadWebSession: () => ipcRenderer.invoke("load-web-session"),
+    webviewPip: (webContentsId: number, videoUrl?: string) => ipcRenderer.invoke("webview-pip", webContentsId, videoUrl),
+    onDownloadStarted: (callback: (data: any) => void) =>
+        ipcRenderer.on("download-started", (_e, data) => callback(data)),
+    onDownloadUpdated: (callback: (data: any) => void) =>
+        ipcRenderer.on("download-updated", (_e, data) => callback(data)),
+    onDownloadDone: (callback: (data: any) => void) =>
+        ipcRenderer.on("download-done", (_e, data) => callback(data)),
+    webmcpGetTools: (webContentsId: number) => ipcRenderer.invoke("webmcp-get-tools", webContentsId),
+    webmcpExecuteTool: (webContentsId: number, toolName: string, params: any) =>
+        ipcRenderer.invoke("webmcp-execute-tool", webContentsId, toolName, params),
 });
 
 // Custom event for "new-window"

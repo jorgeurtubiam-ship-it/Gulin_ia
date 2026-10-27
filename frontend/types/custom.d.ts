@@ -139,6 +139,20 @@ declare global {
         voiceTranscribeLocal: (audioBase64: string, mimeType: string) => Promise<{ success: boolean; transcript?: string; error?: string }>; // gulin-voice-transcribe-local
         nativeSpeak: (text: string) => Promise<boolean>; // gulin-native-tts-say
         nativeStopSpeak: () => Promise<boolean>; // gulin-native-tts-stop
+        captureWebviewPage: (webContentsId: number) => Promise<string>;
+        webviewSendInput: (webContentsId: number, inputEvent: any) => Promise<boolean>;
+        enableWebviewDownloads: (webContentsId: number) => void;
+        openDownloadFile: (filePath: string) => void;
+        showDownloadInFinder: (filePath: string) => void;
+        toggleAdblock: (enabled: boolean) => Promise<boolean>;
+        saveWebSession: (sessionData: any) => Promise<boolean>;
+        loadWebSession: () => Promise<any>;
+        webviewPip: (webContentsId: number, videoUrl?: string) => Promise<boolean>;
+        onDownloadStarted: (callback: (data: any) => void) => void;
+        onDownloadUpdated: (callback: (data: any) => void) => void;
+        onDownloadDone: (callback: (data: any) => void) => void;
+        webmcpGetTools: (webContentsId: number) => Promise<Array<{ name: string; description: string; inputSchema?: any; origin: string }>>;
+        webmcpExecuteTool: (webContentsId: number, toolName: string, params: any) => Promise<any>;
     };
 
     type ElectronContextMenuItem = {
