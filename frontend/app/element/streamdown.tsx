@@ -370,6 +370,8 @@ const CodeBlock = ({ children, onClickExecute, codeBlockMaxWidthAtom }: CodeBloc
         return execLangs.includes(language);
     }, [language]);
 
+    const [dbExplorerState, setDbExplorerState] = useState<"idle" | "sent">("idle");
+
     const handleCopy = async (e: React.MouseEvent) => {
         e.stopPropagation();
         const textToCopy = extractText(children).replace(/\n$/, "");
@@ -388,6 +390,51 @@ const CodeBlock = ({ children, onClickExecute, codeBlockMaxWidthAtom }: CodeBloc
         }
         setExecutingState("sent");
         setTimeout(() => setExecutingState("idle"), 2500);
+    };
+
+    const handleOpenInDBExplorer = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        const sqlText = extractText(children).replace(/\n$/, "");
+        
+        // Buscar si ya existe un bloque db-connections o db-explorer
+        const models = getAllBlockComponentModels();
+        let dbModel: any = null;
+        for (const m of models) {
+            const modelAny = m as any;
+            if (modelAny?.viewType === "db-connections" || modelAny?.viewType === "db-explorer") {
+                dbModel = modelAny;
+                break;
+            }
+        }
+        
+        if (dbModel && typeof dbModel.handleExternalQuery === "function") {
+            dbModel.handleExternalQuery({
+                id: `chat-${Date.now()}`,
+                name: sqlText,
+                sql: sqlText,
+                connection: "",
+                data: []
+            });
+            if (dbModel.blockId) {
+                refocusNode(dbModel.blockId);
+            }
+        } else {
+            createBlock({
+                meta: {
+                    view: "db-connections",
+                    "db:title": "SQL Query",
+                    "db:external-query": {
+                        id: `chat-${Date.now()}`,
+                        name: sqlText,
+                        sql: sqlText,
+                        connection: "",
+                        data: []
+                    }
+                } as any
+            });
+        }
+        setDbExplorerState("sent");
+        setTimeout(() => setDbExplorerState("idle"), 2500);
     };
 
     // INTERCEPT SPECIAL AIOPS FENCED BLOCKS
@@ -439,6 +486,23 @@ const CodeBlock = ({ children, onClickExecute, codeBlockMaxWidthAtom }: CodeBloc
                     </span>
                 </div>
                 <div className="flex items-center gap-1.5">
+                    {/* Botón Abrir en DB Explorer para SQL */}
+                    {language === "sql" && (
+                        <button
+                            onClick={handleOpenInDBExplorer}
+                            className={cn(
+                                "flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer shadow-sm active:scale-95",
+                                dbExplorerState === "sent"
+                                    ? "bg-purple-600/30 text-purple-300 border border-purple-500/50"
+                                    : "bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 hover:border-purple-400"
+                            )}
+                            title="Abrir y pegar directamente en el DB Explorer"
+                        >
+                            <i className={cn("text-[10px]", dbExplorerState === "sent" ? "fa-solid fa-check text-purple-400" : "fa-solid fa-database text-purple-400")} />
+                            <span>{dbExplorerState === "sent" ? "Abierto en DB ✓" : "Abrir en DB Explorer"}</span>
+                        </button>
+                    )}
+
                     {/* Botón Ejecutar en Terminal */}
                     {isTerminalExecutable && (
                         <button
