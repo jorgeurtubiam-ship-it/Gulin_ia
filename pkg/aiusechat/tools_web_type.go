@@ -38,9 +38,6 @@ func parseWebTypeInput(input any) (*WebTypeToolInput, error) {
 		return nil, fmt.Errorf("failed to unmarshal input: %w", err)
 	}
 
-	if result.WidgetId == "" {
-		return nil, fmt.Errorf("widget_id is required")
-	}
 	if result.Selector == "" {
 		return nil, fmt.Errorf("selector is required")
 	}
@@ -57,15 +54,15 @@ func GetWebTypeToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:        "web_type",
 		DisplayName: "Type Text in Web Element",
-		Description: "Type text into a specific input or textarea element identified by a CSS selector in the web browser widget.",
+		Description: "Type text into a specific input or textarea element identified by a CSS selector in the web browser widget. If widget_id is omitted, types in the active web browser.",
 		ToolLogName: "web:type",
-		Strict:      true,
+		Strict:      false,
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"widget_id": map[string]any{
 					"type":        "string",
-					"description": "8-character widget ID of the web browser widget",
+					"description": "Optional 8-character widget ID of the web browser widget",
 				},
 				"selector": map[string]any{
 					"type":        "string",
@@ -76,15 +73,14 @@ func GetWebTypeToolDefinition(tabId string) uctypes.ToolDefinition {
 					"description": "The text to type into the element",
 				},
 			},
-			"required":             []string{"widget_id", "selector", "text"},
-			"additionalProperties": false,
+			"required": []string{"selector", "text"},
 		},
 		ToolCallDesc: func(input any, output any, toolUseData *uctypes.UIMessageDataToolUse) string {
 			parsed, err := parseWebTypeInput(input)
 			if err != nil {
 				return fmt.Sprintf("error parsing input: %v", err)
 			}
-			return fmt.Sprintf("typing text in element '%s' in %s", parsed.Selector, parsed.WidgetId)
+			return fmt.Sprintf("typing text in element '%s'", parsed.Selector)
 		},
 		ToolAnyCallback: func(ctx context.Context, input any, toolUseData *uctypes.UIMessageDataToolUse) (any, error) {
 			parsed, err := parseWebTypeInput(input)
@@ -95,9 +91,20 @@ func GetWebTypeToolDefinition(tabId string) uctypes.ToolDefinition {
 			ctx, cancelFn := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancelFn()
 
-			fullBlockId, err := wcore.ResolveBlockIdFromPrefix(ctx, tabId, parsed.WidgetId)
-			if err != nil {
-				return nil, err
+			var fullBlockId string
+			if parsed.WidgetId != "" {
+				resolvedId, err := wcore.ResolveBlockIdFromPrefix(ctx, tabId, parsed.WidgetId)
+				if err == nil {
+					fullBlockId = resolvedId
+				}
+			}
+
+			if fullBlockId == "" {
+				fullBlockId, _ = findWebBlockId(ctx, tabId)
+			}
+
+			if fullBlockId == "" {
+				return nil, fmt.Errorf("no hay navegador web abierto para escribir texto")
 			}
 
 			workspaceId, err := wstore.DBFindWorkspaceForTabId(ctx, tabId)

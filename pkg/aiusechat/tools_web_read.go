@@ -17,14 +17,14 @@ import (
 )
 
 type WebReadPageToolInput struct {
-	WidgetId string `json:"widget_id"`
+	WidgetId string `json:"widget_id,omitempty"`
 }
 
 func parseWebReadPageInput(input any) (*WebReadPageToolInput, error) {
 	result := &WebReadPageToolInput{}
 
 	if input == nil {
-		return nil, fmt.Errorf("widget_id is required")
+		return result, nil
 	}
 
 	inputBytes, err := json.Marshal(input)
@@ -36,10 +36,6 @@ func parseWebReadPageInput(input any) (*WebReadPageToolInput, error) {
 		return nil, fmt.Errorf("failed to unmarshal input: %w", err)
 	}
 
-	if result.WidgetId == "" {
-		return nil, fmt.Errorf("widget_id is required")
-	}
-
 	return result, nil
 }
 
@@ -48,27 +44,29 @@ func parseWebReadPageInput(input any) (*WebReadPageToolInput, error) {
 func GetWebReadPageToolDefinition(tabId string) uctypes.ToolDefinition {
 	return uctypes.ToolDefinition{
 		Name:        "web_read_page",
-		DisplayName: "Read Web Page",
-		Description: "Extract the text content of a web browser widget. Useful for analyzing page content, finding information, or summarizing articles.",
+		DisplayName: "Read Web Page (Raw Text Fallback)",
+		Description: "FALLBACK ONLY: Extracts raw text content from a web page. PROHIBITED to call first if the page could have structured tools. You MUST ALWAYS call 'webmcp_list_tools' first (especially on Wikipedia, Mercado Libre, e-commerce, documentation) to check for native tools and invoke them via 'webmcp_call_tool'. Use 'web_read_page' ONLY when 'webmcp_list_tools' returns no tools.",
 		ToolLogName: "web:read",
-		Strict:      true,
+		Strict:      false,
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"widget_id": map[string]any{
 					"type":        "string",
-					"description": "8-character widget ID of the web browser widget",
+					"description": "Optional 8-character widget ID of the web browser widget. If omitted, reads from the open web browser.",
 				},
 			},
-			"required":             []string{"widget_id"},
-			"additionalProperties": false,
+			"required": []string{},
 		},
 		ToolCallDesc: func(input any, output any, toolUseData *uctypes.UIMessageDataToolUse) string {
 			parsed, err := parseWebReadPageInput(input)
 			if err != nil {
 				return fmt.Sprintf("error parsing input: %v", err)
 			}
-			return fmt.Sprintf("reading web page content from %s", parsed.WidgetId)
+			if parsed.WidgetId != "" {
+				return fmt.Sprintf("reading web page content from %s", parsed.WidgetId)
+			}
+			return "reading web page content from active browser"
 		},
 		ToolAnyCallback: func(ctx context.Context, input any, toolUseData *uctypes.UIMessageDataToolUse) (any, error) {
 			parsed, err := parseWebReadPageInput(input)
@@ -79,9 +77,20 @@ func GetWebReadPageToolDefinition(tabId string) uctypes.ToolDefinition {
 			ctx, cancelFn := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancelFn()
 
-			fullBlockId, err := wcore.ResolveBlockIdFromPrefix(ctx, tabId, parsed.WidgetId)
-			if err != nil {
-				return nil, err
+			var fullBlockId string
+			if parsed.WidgetId != "" {
+				resolvedId, err := wcore.ResolveBlockIdFromPrefix(ctx, tabId, parsed.WidgetId)
+				if err == nil {
+					fullBlockId = resolvedId
+				}
+			}
+
+			if fullBlockId == "" {
+				fullBlockId, _ = findWebBlockId(ctx, tabId)
+			}
+
+			if fullBlockId == "" {
+				return nil, fmt.Errorf("no hay ningún navegador web abierto en este espacio. Usa primero 'web_navigate' para abrir la página deseada.")
 			}
 
 			workspaceId, err := wstore.DBFindWorkspaceForTabId(ctx, tabId)
