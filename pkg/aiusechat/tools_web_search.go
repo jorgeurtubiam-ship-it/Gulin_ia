@@ -55,7 +55,7 @@ func GetWebSearchToolDefinition(tabId string) uctypes.ToolDefinition {
 				return nil, fmt.Errorf("widget_id and query are required")
 			}
 
-			searchURL := fmt.Sprintf("https://www.google.com/search?q=%s", url.QueryEscape(parsed.Query))
+			searchURL := fmt.Sprintf("https://www.google.com/search?q=%s&hl=es&gl=cl", url.QueryEscape(parsed.Query))
 
 			ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancelFn()
