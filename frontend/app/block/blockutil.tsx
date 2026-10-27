@@ -55,6 +55,18 @@ export function blockViewToIcon(view: string): string {
     if (view == "brain") {
         return "brain";
     }
+    if (view == "opshub" || view == "fleet-monitor") {
+        return "server";
+    }
+    if (view == "cron-view") {
+        return "calendar-days";
+    }
+    if (view == "workflow-canvas") {
+        return "route";
+    }
+    if (view == "alerts-view") {
+        return "triangle-exclamation";
+    }
     return "square";
 }
 
@@ -103,6 +115,18 @@ export function blockViewToName(view: string): string {
     }
     if (view == "brain") {
         return "Neural Brain";
+    }
+    if (view == "opshub" || view == "fleet-monitor") {
+        return "Fleet Monitoring";
+    }
+    if (view == "cron-view") {
+        return "Scheduler & Jobs";
+    }
+    if (view == "workflow-canvas") {
+        return "Visual Workflows";
+    }
+    if (view == "alerts-view") {
+        return "Incidents & Alerts";
     }
     return view;
 }

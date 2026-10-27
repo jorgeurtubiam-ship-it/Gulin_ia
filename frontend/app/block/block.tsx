@@ -76,6 +76,7 @@ import { DashboardViewModel } from "@/app/view/dashboard/dashboard-model";
 import { BrainViewModel } from "@/app/view/brain/brain-model";
 import { ToolsAdminViewModel } from "@/app/view/toolsadmin/toolsadmin-model";
 import { GulinMapViewModel } from "@/app/view/gulinmap/gulinmap";
+import { OpsHubViewModel } from "@/app/view/opshub/opshub-model";
 
 const BlockRegistry: Map<string, ViewModelClass> = new Map();
 BlockRegistry.set("term", TermViewModel);
@@ -129,6 +130,13 @@ BlockRegistry.set("brain", BrainViewModel);
 BlockRegistry.set("auto-agents", AutoAgentsViewModel);
 BlockRegistry.set("tools-admin", ToolsAdminViewModel);
 BlockRegistry.set("gulin-map", GulinMapViewModel);
+
+// Ops & Automation Control Plane
+BlockRegistry.set("opshub", OpsHubViewModel);
+BlockRegistry.set("fleet-monitor", OpsHubViewModel);
+BlockRegistry.set("cron-view", OpsHubViewModel);
+BlockRegistry.set("workflow-canvas", OpsHubViewModel);
+BlockRegistry.set("alerts-view", OpsHubViewModel);
 
 function makeViewModel(blockId: string, blockView: string, nodeModel: BlockNodeModel, tabModel: TabModel): ViewModel {
     const ctor = BlockRegistry.get(blockView);
@@ -287,9 +295,7 @@ const BlockFull = memo(({ nodeModel, viewModel }: FullBlockProps) => {
 
     const handleChildFocus = useCallback(
         (event: React.FocusEvent<HTMLDivElement, Element>) => {
-            console.log("setFocusedChild", nodeModel.blockId, getElemAsStr(event.target));
             if (!isFocused) {
-                console.log("focusedChild focus", nodeModel.blockId);
                 nodeModel.focusNode();
             }
         },
