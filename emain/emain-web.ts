@@ -3,6 +3,7 @@
 
 import { ipcMain, webContents, WebContents } from "electron";
 import { GulinBrowserWindow } from "./emain-window";
+import { WEBMCP_MAIN_WORLD_SCRIPT } from "./webmcp-runtime";
 
 export function getWebContentsByBlockId(ww: GulinBrowserWindow, tabId: string, blockId: string): Promise<WebContents> {
     const prtn = new Promise<WebContents>((resolve, reject) => {
@@ -147,10 +148,13 @@ export async function webType(wc: WebContents, selector: string, text: string): 
         .replace(/\t/g, "\\t");
     const execExpr = `(() => {
         try {
-            const el = document.querySelector("${escapedSelector}");
+            const el = document.querySelector("${escapedSelector}") as HTMLInputElement | HTMLTextAreaElement;
             if (el) {
-                (el as HTMLInputElement | HTMLTextAreaElement).value = "${escapedText}";
-                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.focus();
+                el.value = "${escapedText}";
+                el.dispatchEvent(new Event('focus', { bubbles: true }));
+                el.dispatchEvent(new InputEvent('beforeinput', { data: "${escapedText}", inputType: 'insertText', bubbles: true }));
+                el.dispatchEvent(new InputEvent('input', { data: "${escapedText}", inputType: 'insertText', bubbles: true }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
                 return { success: true };
             }
@@ -163,4 +167,48 @@ export async function webType(wc: WebContents, selector: string, text: string): 
     if (result.error) {
         throw new Error(result.error);
     }
+}
+
+/**
+ * Executes a native WebMCP tool on the page via document.modelContext.
+ */
+export async function webExecuteWebMCP(wc: WebContents, toolName: string, params: any): Promise<string> {
+    if (!wc || !toolName) throw new Error("Missing wc or toolName");
+    const script = `(async () => {
+        try {
+            if (!document.modelContext) {
+                ${WEBMCP_MAIN_WORLD_SCRIPT}
+            }
+            if (!document.modelContext) {
+                return JSON.stringify({ error: "document.modelContext is not defined" });
+            }
+            const res = await document.modelContext.executeTool(${JSON.stringify(toolName)}, ${JSON.stringify(params || {})});
+            return JSON.stringify({ success: true, result: res });
+        } catch (e) {
+            return JSON.stringify({ error: e?.message || String(e) });
+        }
+    })()`;
+    const jsonStr = await wc.executeJavaScript(script);
+    return jsonStr;
+}
+
+/**
+ * Returns JSON array of all registered WebMCP tools on the active page.
+ */
+export async function webGetWebMCPTools(wc: WebContents): Promise<string> {
+    if (!wc) return "[]";
+    const script = `(async () => {
+        try {
+            if (!document.modelContext) {
+                ${WEBMCP_MAIN_WORLD_SCRIPT}
+            }
+            if (!document.modelContext) return "[]";
+            const tools = await document.modelContext.getTools();
+            return JSON.stringify(tools);
+        } catch (e) {
+            return "[]";
+        }
+    })()`;
+    const jsonStr = await wc.executeJavaScript(script);
+    return jsonStr;
 }

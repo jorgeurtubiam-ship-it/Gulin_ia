@@ -255,6 +255,214 @@ export function initIpcHandlers() {
         return `data:image/png;base64,${base64String}`;
     });
 
+    // Browser Agent: Captura solo el webview para enviárselo a la IA
+    electron.ipcMain.handle("webview-capture-page", async (event, webContentsId: number) => {
+        try {
+            const wc = electron.webContents.fromId(webContentsId);
+            if (!wc) throw new Error(`No webContents found for id: ${webContentsId}`);
+            const image = await wc.capturePage();
+            const base64String = image.toPNG().toString("base64");
+            return `data:image/png;base64,${base64String}`;
+        } catch (e) {
+            console.error("webview-capture-page error:", e);
+            throw e;
+        }
+    });
+
+    // Browser Agent: Envía eventos de mouse y teclado al webview
+    electron.ipcMain.handle(
+        "webview-send-input",
+        async (event, webContentsId: number, inputEvent: Electron.MouseInputEvent | Electron.KeyboardInputEvent | Electron.MouseWheelInputEvent) => {
+            try {
+                const wc = electron.webContents.fromId(webContentsId);
+                if (!wc) throw new Error(`No webContents found for id: ${webContentsId}`);
+                wc.sendInputEvent(inputEvent as any);
+                return true;
+            } catch (e) {
+                console.error("webview-send-input error:", e);
+                throw e;
+            }
+        }
+    );
+
+    // ─── Download Manager ─────────────────────────────────────────────────────
+    // Map to track active downloads by tab webContentsId
+    const downloadListeners = new Map<number, boolean>();
+
+    electron.ipcMain.on("webview-enable-downloads", (event, webContentsId: number) => {
+        if (downloadListeners.has(webContentsId)) return;
+        const wc = electron.webContents.fromId(webContentsId);
+        if (!wc) return;
+        downloadListeners.set(webContentsId, true);
+        wc.session.on("will-download", (dlEvent, item) => {
+            const downloadId = `dl-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            const senderWc = event.sender;
+            senderWc.send("download-started", {
+                id: downloadId,
+                filename: item.getFilename(),
+                url: item.getURL(),
+                totalBytes: item.getTotalBytes(),
+                state: "progressing",
+                startTime: Date.now(),
+            });
+            item.on("updated", (_e, state) => {
+                senderWc.send("download-updated", {
+                    id: downloadId,
+                    receivedBytes: item.getReceivedBytes(),
+                    totalBytes: item.getTotalBytes(),
+                    state,
+                });
+            });
+            item.once("done", (_e, state) => {
+                senderWc.send("download-done", {
+                    id: downloadId,
+                    state,
+                    savePath: item.getSavePath(),
+                    receivedBytes: item.getReceivedBytes(),
+                    totalBytes: item.getTotalBytes(),
+                });
+            });
+        });
+    });
+
+    electron.ipcMain.on("open-download-file", (event, filePath: string) => {
+        fireAndForget(() => electron.shell.openPath(filePath));
+    });
+
+    electron.ipcMain.on("show-download-in-finder", (event, filePath: string) => {
+        electron.shell.showItemInFolder(filePath);
+    });
+
+    // ─── Ad Blocker ───────────────────────────────────────────────────────────
+    let adBlockEnabled = false;
+    const AD_DOMAINS = [
+        "doubleclick.net", "googlesyndication.com", "adnxs.com", "amazon-adsystem.com",
+        "googletagmanager.com", "google-analytics.com", "analytics.google.com",
+        "outbrain.com", "taboola.com", "criteo.com", "pubmatic.com", "openx.net",
+        "rubiconproject.com", "moatads.com", "hotjar.com", "mouseflow.com",
+        "scorecardresearch.com", "quantserve.com", "quantcast.com",
+        "adobedtm.com", "omtrdc.net", "2mdn.net", "adform.net", "adroll.com",
+        "adsrvr.org", "advertising.com", "adtechus.com", "aol.com", "appnexus.com",
+        "bidswitch.net", "bluekai.com", "casalemedia.com", "chartbeat.com",
+        "cmcore.com", "connexity.net", "convertro.com", "demdex.net",
+        "dotomi.com", "exelator.com", "exponential.com", "eyeota.net",
+        "facebook.com/tr", "flashtalking.com", "gumgum.com", "iponweb.net",
+        "lijit.com", "liveintent.com", "liveramp.com", "lotame.com",
+        "mathtag.com", "media.net", "mediaplex.com", "mopub.com",
+        "mxptint.net", "narrative.io", "nexac.com", "ntv.io",
+        "optimizely.com", "pardot.com", "pixel.facebook.com", "platform.twitter.com",
+        "rfihub.net", "rlcdn.com", "rokt.com", "serving-sys.com",
+        "shareaholic.com", "sharethrough.com", "simpli.fi", "sizmek.com",
+        "skimresources.com", "smartadserver.com", "sojern.com", "sovrn.com",
+        "spotxchange.com", "staticice.com.au", "tapad.com", "teads.tv",
+        "tiqcdn.com", "tremormedia.com", "tribalfusion.com", "trustarc.com",
+        "turn.com", "undertone.com", "vertamedia.com", "videologygroup.com",
+        "w55c.net", "wdgserv.com", "xaxis.com", "yieldr.com", "zendesk.com",
+        "addthis.com", "adf.ly", "clicksor.com", "contextweb.com",
+    ];
+
+    electron.ipcMain.handle("toggle-adblock", async (event, enabled: boolean) => {
+        adBlockEnabled = enabled;
+        const tabView = getGulinTabViewByWebContentsId(event.sender.id);
+        if (!tabView) return false;
+        const session = tabView.webContents.session;
+        if (enabled) {
+            session.webRequest.onBeforeRequest({ urls: ["*://*/*"] }, (details, callback) => {
+                if (!adBlockEnabled) { callback({}); return; }
+                try {
+                    const hostname = new URL(details.url).hostname;
+                    const blocked = AD_DOMAINS.some(d => hostname === d || hostname.endsWith("." + d));
+                    callback(blocked ? { cancel: true } : {});
+                } catch {
+                    callback({});
+                }
+            });
+        } else {
+            session.webRequest.onBeforeRequest(null);
+        }
+        return true;
+    });
+
+    // ─── Session Save/Restore ─────────────────────────────────────────────────
+    electron.ipcMain.handle("save-web-session", async (event, sessionData: object) => {
+        try {
+            const dataDir = electronApp.getPath("userData");
+            const sessionFile = path.join(dataDir, "web-session.json");
+            fs.writeFileSync(sessionFile, JSON.stringify(sessionData, null, 2), "utf-8");
+            return true;
+        } catch (e) {
+            console.error("save-web-session error:", e);
+            return false;
+        }
+    });
+
+    electron.ipcMain.handle("load-web-session", async (event) => {
+        try {
+            const dataDir = electronApp.getPath("userData");
+            const sessionFile = path.join(dataDir, "web-session.json");
+            if (!fs.existsSync(sessionFile)) return null;
+            const content = fs.readFileSync(sessionFile, "utf-8");
+            return JSON.parse(content);
+        } catch (e) {
+            console.error("load-web-session error:", e);
+            return null;
+        }
+    });
+
+    // ─── Picture-in-Picture ───────────────────────────────────────────────────
+    electron.ipcMain.handle("webview-pip", async (event, webContentsId: number, videoUrl: string) => {
+        try {
+            const wc = electron.webContents.fromId(webContentsId);
+            if (!wc) return false;
+            // Trigger browser-native PiP via JS
+            await wc.executeJavaScript(`
+                (async function() {
+                    const video = document.querySelector('video');
+                    if (video && document.pictureInPictureEnabled) {
+                        if (document.pictureInPictureElement) {
+                            await document.exitPictureInPicture();
+                        } else {
+                            await video.requestPictureInPicture();
+                        }
+                        return true;
+                    }
+                    return false;
+                })()
+            `);
+            return true;
+        } catch (e) {
+            console.error("webview-pip error:", e);
+            return false;
+        }
+    });
+
+    // ========================================================================
+    // W3C WebMCP (Web Model Context Protocol) Handlers
+    // ========================================================================
+    electron.ipcMain.handle("webmcp-get-tools", async (_event, webContentsId: number) => {
+        try {
+            const wc = electron.webContents.fromId(webContentsId);
+            if (!wc) return [];
+            const tools = await wc.executeJavaScript(`document.modelContext?.getTools() || []`);
+            return tools;
+        } catch (e) {
+            console.error("webmcp-get-tools error:", e);
+            return [];
+        }
+    });
+
+    electron.ipcMain.handle("webmcp-execute-tool", async (_event, webContentsId: number, toolName: string, params: any) => {
+        try {
+            const wc = electron.webContents.fromId(webContentsId);
+            if (!wc) throw new Error("Webview not found");
+            const script = `document.modelContext.executeTool(${JSON.stringify(toolName)}, ${JSON.stringify(params || {})})`;
+            return await wc.executeJavaScript(script);
+        } catch (e: any) {
+            console.error("webmcp-execute-tool error:", e);
+            throw new Error(`WebMCP execution error: ${e?.message || e}`);
+        }
+    });
+
     electron.ipcMain.on("get-env", (event, varName) => {
         event.returnValue = process.env[varName] ?? null;
     });

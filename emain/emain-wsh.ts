@@ -7,7 +7,7 @@ import { RpcApi } from "@/app/store/wshclientapi";
 import { Notification, net, safeStorage, shell } from "electron";
 import { getResolvedUpdateChannel } from "emain/updater";
 import { unamePlatform } from "./emain-platform";
-import { getWebContentsByBlockId, webClick, webGetSelector, webGetText, webType } from "./emain-web";
+import { getWebContentsByBlockId, webClick, webGetSelector, webGetText, webType, webExecuteWebMCP, webGetWebMCPTools } from "./emain-web";
 import { createBrowserWindow, getGulinWindowById, getGulinWindowByWorkspaceId } from "./emain-window";
 
 export class ElectronWshClientType extends WshClient {
@@ -75,6 +75,44 @@ export class ElectronWshClientType extends WshClient {
             throw new Error(`no webcontents found with blockid ${data.blockid}`);
         }
         await webType(wc, data.selector, data.text);
+    }
+
+    async handle_webmcp_execute(rh: RpcResponseHelper, data: any): Promise<string> {
+        if (!data.tabid || !data.blockid || !data.workspaceid) {
+            throw new Error("tabid, blockid and workspaceid are required");
+        }
+        const ww = getGulinWindowByWorkspaceId(data.workspaceid);
+        if (ww == null) {
+            throw new Error(`no window found with workspace ${data.workspaceid}`);
+        }
+        const wc = await getWebContentsByBlockId(ww, data.tabid, data.blockid);
+        if (wc == null) {
+            throw new Error(`no webcontents found with blockid ${data.blockid}`);
+        }
+        return await webExecuteWebMCP(wc, data.toolname, data.params);
+    }
+
+    async handle_webmcpexecute(rh: RpcResponseHelper, data: any): Promise<string> {
+        return this.handle_webmcp_execute(rh, data);
+    }
+
+    async handle_webmcp_list(rh: RpcResponseHelper, data: any): Promise<string> {
+        if (!data.tabid || !data.blockid || !data.workspaceid) {
+            throw new Error("tabid, blockid and workspaceid are required");
+        }
+        const ww = getGulinWindowByWorkspaceId(data.workspaceid);
+        if (ww == null) {
+            throw new Error(`no window found with workspace ${data.workspaceid}`);
+        }
+        const wc = await getWebContentsByBlockId(ww, data.tabid, data.blockid);
+        if (wc == null) {
+            return "[]";
+        }
+        return await webGetWebMCPTools(wc);
+    }
+
+    async handle_webmcplist(rh: RpcResponseHelper, data: any): Promise<string> {
+        return this.handle_webmcp_list(rh, data);
     }
 
     async handle_notify(rh: RpcResponseHelper, notificationOptions: GulinNotificationOptions) {
