@@ -897,6 +897,16 @@ class RpcApiType {
         return client.wshRpcCall("webgettext", data, opts);
     }
 
+    // command "webmcpexecute" [call]
+    WebMCPExecuteCommand(client: WshClient, data: CommandWebMCPExecuteData, opts?: RpcOpts): Promise<string> {
+        return client.wshRpcCall("webmcpexecute", data, opts);
+    }
+
+    // command "webmcplist" [call]
+    WebMCPListCommand(client: WshClient, data: CommandWebMCPListData, opts?: RpcOpts): Promise<string> {
+        return client.wshRpcCall("webmcplist", data, opts);
+    }
+
     // command "webselector" [call]
     WebSelectorCommand(client: WshClient, data: CommandWebSelectorData, opts?: RpcOpts): Promise<string[]> {
         return client.wshRpcCall("webselector", data, opts);
