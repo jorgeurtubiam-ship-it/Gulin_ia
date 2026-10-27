@@ -1,4 +1,4 @@
-import { BlockNodeModel, FullBlockProps, ViewModel } from "@/app/block/blocktypes";
+import { BlockNodeModel, FullBlockProps } from "@/app/block/blocktypes";
 import { TabModel } from "@/app/store/tab-model";
 import { atom } from "jotai";
 import { ToolsAdminView } from "./toolsadmin";
