@@ -128,6 +128,11 @@ const (
 	MetaKey_WebPartition                     = "web:partition"
 	MetaKey_WebUserAgentType                 = "web:useragenttype"
 
+	MetaKey_DbTitle                          = "db:title"
+	MetaKey_DbConnection                     = "db:connection"
+	MetaKey_DbData                           = "db:data"
+	MetaKey_DbExternalQuery                  = "db:external-query"
+
 	MetaKey_MarkdownFontSize                 = "markdown:fontsize"
 	MetaKey_MarkdownFixedFontSize            = "markdown:fixedfontsize"
 

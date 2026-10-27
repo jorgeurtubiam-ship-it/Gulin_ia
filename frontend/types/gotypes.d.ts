@@ -716,6 +716,22 @@ declare global {
         tabid: string;
     };
 
+    // wshrpc.CommandWebMCPExecuteData
+    type CommandWebMCPExecuteData = {
+        workspaceid: string;
+        blockid: string;
+        tabid: string;
+        toolname: string;
+        params?: {[key: string]: any};
+    };
+
+    // wshrpc.CommandWebMCPListData
+    type CommandWebMCPListData = {
+        workspaceid: string;
+        blockid: string;
+        tabid: string;
+    };
+
     // wshrpc.CommandWebSelectorData
     type CommandWebSelectorData = {
         workspaceid: string;
@@ -1328,6 +1344,10 @@ declare global {
         "web:hidenav"?: boolean;
         "web:partition"?: string;
         "web:useragenttype"?: string;
+        "db:title"?: string;
+        "db:connection"?: string;
+        "db:data"?: string;
+        "db:external-query"?: {[key: string]: any};
         "markdown:fontsize"?: number;
         "markdown:fixedfontsize"?: number;
         "tsunami:*"?: boolean;

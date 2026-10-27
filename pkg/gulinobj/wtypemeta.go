@@ -132,6 +132,12 @@ type MetaTSType struct {
 	WebPartition     string  `json:"web:partition,omitempty"`
 	WebUserAgentType string  `json:"web:useragenttype,omitempty"`
 
+	// for db explorer / db connections blocks
+	DbTitle         string         `json:"db:title,omitempty"`
+	DbConnection    string         `json:"db:connection,omitempty"`
+	DbData          string         `json:"db:data,omitempty"`
+	DbExternalQuery map[string]any `json:"db:external-query,omitempty"`
+
 	MarkdownFontSize      float64 `json:"markdown:fontsize,omitempty"`
 	MarkdownFixedFontSize float64 `json:"markdown:fixedfontsize,omitempty"`
 
