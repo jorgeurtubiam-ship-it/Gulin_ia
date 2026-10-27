@@ -58,6 +58,39 @@ import { configureAutoUpdater, updater } from "./updater";
 
 const electronApp = electron.app;
 
+// Disable Blink AutomationControlled feature to remove navigator.webdriver at the C++ engine level
+electronApp.commandLine.appendSwitch("disable-blink-features", "AutomationControlled");
+
+export const CHROME_DESKTOP_UA =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+export function setupWebSessionStealth(sess: electron.Session) {
+    if (!sess) return;
+    sess.setUserAgent(CHROME_DESKTOP_UA);
+    sess.webRequest.onBeforeSendHeaders((details, callback) => {
+        const headers = { ...details.requestHeaders };
+        // Strip automation indicators
+        delete headers["X-DevTools-Emulate-Network-Conditions-Client-Id"];
+
+        // Set genuine macOS Chrome 131 Client Hints
+        headers["User-Agent"] = CHROME_DESKTOP_UA;
+        headers["Sec-CH-UA"] = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"';
+        headers["Sec-CH-UA-Mobile"] = "?0";
+        headers["Sec-CH-UA-Platform"] = '"macOS"';
+        headers["Sec-CH-UA-Platform-Version"] = '"15.7.0"';
+        headers["Sec-CH-UA-Arch"] = '"arm"';
+        headers["Sec-CH-UA-Bitness"] = '"64"';
+        headers["Sec-CH-UA-Model"] = '""';
+        headers["Sec-CH-UA-Full-Version-List"] =
+            '"Google Chrome";v="131.0.0.0", "Chromium";v="131.0.0.0", "Not_A Brand";v="24.0.0.0"';
+        headers["Upgrade-Insecure-Requests"] = "1";
+        if (!headers["Accept-Language"]) {
+            headers["Accept-Language"] = "es-419,es;q=0.9,es-CL;q=0.8,en;q=0.7";
+        }
+        callback({ requestHeaders: headers });
+    });
+}
+
 let confirmQuit = true;
 
 const gulinDataDir = getGulinDataDir();
@@ -392,6 +425,7 @@ async function appMain() {
     const ready = await getGulinSrvReady();
     console.log("gulinsrv ready signal received", ready, Date.now() - startTs, "ms");
     await electronApp.whenReady();
+    setupWebSessionStealth(electron.session.fromPartition("persist:gulin-web"));
     configureAuthKeyRequestInjection(electron.session.defaultSession);
     electron.session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
         if (permission === "media") {
