@@ -637,3 +637,77 @@ export function decodeWAFText(text: string): string {
         .replace(/__GBTK__/g, "`");
 }
 
+/**
+ * Genera una descripción legible en un short format a partir de los parámetros
+ * de un tool, evitando mostrar JSON.stringify crudo al usuario en los chips
+ * de aprobación y vistas de cascada.
+ *
+ * Reglas:
+ *   - Si el valor es string y \u003c 60 chars, se muestra tal cual.
+ *   - Si es string largo (código, SQL, JSON, etc.) se trunca y se etiqueta.
+ *   - Si es objeto, se enumeran sus campos más relevantes (filename, cmd, sql, query, etc.).
+ *   - Máximo 90 caracteres para mantener estética del chip.
+ */
+export function buildSmartDescription(params: any, maxLen = 90): string {
+    if (params == null) return "";
+
+    // String: detectar si parece código para etiquetarlo
+    if (typeof params === "string") {
+        const trimmed = params.trim();
+        if (!trimmed) return "";
+        // Detectar lenguaje probable
+        const lower = trimmed.toLowerCase();
+        let prefix = "";
+        if (/^\s*(select|insert|update|delete|with|create|alter|drop)\s+/i.test(trimmed)) prefix = "SQL: ";
+        else if (/^\s*(import|export|const|let|var|function|class|async)\s+/m.test(trimmed)) prefix = "Code: ";
+        else if (/^\s*<\/?\w+/m.test(trimmed)) prefix = "HTML: ";
+        else if (/^\s*[{[]/.test(trimmed) && /[}\]]\s*$/.test(trimmed)) prefix = "JSON: ";
+        else if (/^(GET|POST|PUT|DELETE|PATCH|curl)\s/m.test(trimmed)) prefix = "HTTP: ";
+        else if (/^[a-zA-Z0-9_./-]+\s*[:=]\s*\S/.test(trimmed) && /\n/.test(trimmed)) prefix = "Config: ";
+
+        const oneLine = trimmed.replace(/\s+/g, " ").trim();
+        if (oneLine.length <= maxLen - prefix.length) return prefix + oneLine;
+        return prefix + oneLine.slice(0, maxLen - prefix.length - 1) + "…";
+    }
+
+    // Array: mostrar count y primer elemento
+    if (Array.isArray(params)) {
+        if (params.length === 0) return "";
+        const first = params[0];
+        if (typeof first === "string") {
+            return `${params.length} item${params.length > 1 ? "s" : ""}: ${first.length > 50 ? first.slice(0, 47) + "…" : first}`;
+        }
+        return `${params.length} item${params.length > 1 ? "s" : ""}`;
+    }
+
+    // Objeto: preferir campos legibles conocidos
+    if (typeof params === "object") {
+        const priorityKeys = [
+            "inputfilename", "filename", "path", "filepath", "file",
+            "cmd", "command", "shellcommand",
+            "sql", "query", "script",
+            "url", "endpoint", "target", "host", "action",
+            "message", "text", "content", "name", "title"
+        ];
+        const found: string[] = [];
+        for (const k of priorityKeys) {
+            const v = (params as any)[k];
+            if (typeof v === "string" && v.trim()) {
+                found.push(`${k}: ${v.length > 40 ? v.slice(0, 37) + "…" : v}`);
+                if (found.join(" | ").length > maxLen) break;
+            }
+        }
+        if (found.length > 0) {
+            const joined = found.join(" | ");
+            return joined.length > maxLen ? joined.slice(0, maxLen - 1) + "…" : joined;
+        }
+        // Fallback: nombre de las primeras claves
+        const keys = Object.keys(params).slice(0, 3);
+        if (keys.length === 0) return "";
+        return `Params: ${keys.join(", ")}${Object.keys(params).length > 3 ? ", …" : ""}`;
+    }
+
+    // Booleano / null
+    return String(params);
+}
+

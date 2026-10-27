@@ -11,7 +11,7 @@ import { AIFeedbackButtons } from "./aifeedbackbuttons";
 import { AIToolUseGroup } from "./aitooluse";
 import { GulinUIMessage, GulinUIMessagePart } from "./aitypes";
 import { GulinAIModel } from "./gulinai-model";
-import { decodeWAFText } from "./ai-utils";
+import { decodeWAFText, buildSmartDescription } from "./ai-utils";
 import { getSettingsKeyAtom } from "@/app/store/global";
 import { VoiceService } from "./voice/voice-service";
 import { voiceStateAtom } from "./voice/voice-atoms";
@@ -312,7 +312,7 @@ export const AIToolApprovalBanner = memo(({ parts }: AIToolApprovalBannerProps) 
                 {activeParts.map((p, idx) => {
                     const toolData = p.data!;
                     const toolName = toolData.toolname;
-                    const desc = toolData.tooldesc || (toolData.parameters ? JSON.stringify(toolData.parameters) : "");
+                    const desc = toolData.tooldesc || (toolData.parameters ? buildSmartDescription(toolData.parameters) : "");
                     const isFileWrite = toolName === "write_text_file" || toolName === "edit_text_file";
 
                     return (
