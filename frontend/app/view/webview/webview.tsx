@@ -5,6 +5,7 @@ import { BlockNodeModel } from "@/app/block/blocktypes";
 import type { TabModel } from "@/app/store/tab-model";
 import { Search, useSearch } from "@/app/element/search";
 import { createBlock, getApi, getBlockMetaKeyAtom, getSettingsKeyAtom, openLink } from "@/app/store/global";
+import { GulinAIModel } from "@/app/aipanel/gulinai-model";
 import { getSimpleControlShiftAtom } from "@/app/store/keymodel";
 import { ObjectService } from "@/app/store/services";
 import { RpcApi } from "@/app/store/wshclientapi";
@@ -24,7 +25,22 @@ import { Atom, PrimitiveAtom, atom, useAtomValue, useSetAtom } from "jotai";
 import { Fragment, createRef, memo, useCallback, useEffect, useRef, useState } from "react";
 import "./webview.scss";
 
-// User agent strings for mobile emulation
+import { BrowserAgentOverlay } from "./browser-agent-overlay";
+import { WebviewCommandPalette } from "./webview-command-palette";
+import { WebviewTabbar, type WebTab } from "./webview-tabbar";
+import { DownloadManager, type DownloadItem } from "./download-manager";
+import { WebHistoryPanel, type HistoryEntry } from "./web-history-panel";
+import { WebviewBookmarks, type BookmarkItem } from "./webview-bookmarks";
+import { ReadingList, type ReadingListItem } from "./reading-list";
+import { WebviewQuickSwitcher, type SwitcherItem } from "./webview-quick-switcher";
+import { toggleReaderModeScript } from "./reader-mode";
+import { getClipPageScript, formatAsMarkdown } from "./web-clipper";
+import { executeBrowserAgentTool } from "./browser-agent-tools";
+import { WebMCPBadge, type WebMCPToolInfo } from "./webmcp-badge";
+
+// User agent strings (Genuine Google Chrome on macOS avoids anti-bot CAPTCHA)
+const USER_AGENT_DESKTOP =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const USER_AGENT_IPHONE =
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 const USER_AGENT_ANDROID =
@@ -57,6 +73,7 @@ export class WebViewModel implements ViewModel {
     homepageUrl: Atom<string>;
     urlInputFocused: PrimitiveAtom<boolean>;
     isLoading: PrimitiveAtom<boolean>;
+    loadProgress: PrimitiveAtom<number>;
     urlWrapperClassName: PrimitiveAtom<string>;
     refreshIcon: PrimitiveAtom<string>;
     webviewRef: React.RefObject<WebviewTag>;
@@ -72,6 +89,27 @@ export class WebViewModel implements ViewModel {
     typeaheadOpen: PrimitiveAtom<boolean>;
     partitionOverride: PrimitiveAtom<string> | null;
     userAgentType: Atom<string>;
+    readAloudActive: PrimitiveAtom<boolean>;
+
+    // New Browser Feature Atoms
+    isBrowserAgentActive: PrimitiveAtom<boolean>;
+    browserAgentAction: PrimitiveAtom<string>;
+    isCommandPaletteOpen: PrimitiveAtom<boolean>;
+    isHistoryOpen: PrimitiveAtom<boolean>;
+    isBookmarksOpen: PrimitiveAtom<boolean>;
+    isReadingListOpen: PrimitiveAtom<boolean>;
+    isDownloadsOpen: PrimitiveAtom<boolean>;
+    isQuickSwitcherOpen: PrimitiveAtom<boolean>;
+    historyList: PrimitiveAtom<HistoryEntry[]>;
+    bookmarksList: PrimitiveAtom<BookmarkItem[]>;
+    readingList: PrimitiveAtom<ReadingListItem[]>;
+    downloadsList: PrimitiveAtom<DownloadItem[]>;
+    tabsList: PrimitiveAtom<WebTab[]>;
+    activeTabId: PrimitiveAtom<string>;
+    isAdblockEnabled: PrimitiveAtom<boolean>;
+    isDarkModeForced: PrimitiveAtom<boolean>;
+    webmcpTools: PrimitiveAtom<WebMCPToolInfo[]>;
+    isWebMcpPopoverOpen: PrimitiveAtom<boolean>;
 
     constructor(blockId: string, nodeModel: BlockNodeModel, tabModel: TabModel) {
         this.nodeModel = nodeModel;
@@ -90,6 +128,7 @@ export class WebViewModel implements ViewModel {
         this.urlWrapperClassName = atom("");
         this.urlInputFocused = atom(false);
         this.isLoading = atom(false);
+        this.loadProgress = atom(0);
         this.refreshIcon = atom("rotate-right");
         this.viewIcon = atom("globe");
         this.viewName = atom("Web");
@@ -104,6 +143,32 @@ export class WebViewModel implements ViewModel {
 
         this.mediaPlaying = atom(false);
         this.mediaMuted = atom(false);
+        this.readAloudActive = atom(false);
+
+        // Feature atoms initialization
+        this.isBrowserAgentActive = atom(false);
+        this.browserAgentAction = atom("");
+        this.isCommandPaletteOpen = atom(false);
+        this.isHistoryOpen = atom(false);
+        this.isBookmarksOpen = atom(false);
+        this.isReadingListOpen = atom(false);
+        this.isDownloadsOpen = atom(false);
+        this.isQuickSwitcherOpen = atom(false);
+        this.historyList = atom<HistoryEntry[]>([]);
+        this.bookmarksList = atom<BookmarkItem[]>([]);
+        this.readingList = atom<ReadingListItem[]>([]);
+        this.downloadsList = atom<DownloadItem[]>([]);
+        this.tabsList = atom<WebTab[]>([{ id: "tab-1", url: "", title: "Pestaña 1" }]);
+        this.activeTabId = atom<string>("tab-1");
+        this.isAdblockEnabled = atom(false);
+        this.isDarkModeForced = atom(false);
+        this.webmcpTools = atom<WebMCPToolInfo[]>([]);
+        this.isWebMcpPopoverOpen = atom(false);
+
+        // Registrar este WebViewModel globalmente para que Gulin AI pueda accederlo
+        (window as any).activeGulinWebViewModel = this;
+        (window as any).executeBrowserAgentTool = (toolName: string, params: any) =>
+            this.runAgentTool(toolName, params);
 
         this.viewText = atom((get) => {
             const homepageUrl = get(this.homepageUrl);
@@ -207,6 +272,79 @@ export class WebViewModel implements ViewModel {
                         const externalUrl = this.modifyExternalUrl?.(url) ?? url;
                         return getApi().openExternal(externalUrl);
                     }
+                },
+            });
+
+            // Browser Agent — Botón "Enviar al Chat de IA"
+            buttons.push({
+                elemtype: "iconbutton",
+                icon: "comment",
+                title: "Enviar al Chat de IA",
+                click: () => {
+                    const currentUrl = this.getUrl();
+                    if (currentUrl != null && currentUrl !== "") {
+                        try {
+                            const aiModel = GulinAIModel.getInstance();
+                            const currentInput = globalStore.get(aiModel.inputAtom);
+                            const urlContext = currentInput
+                                ? `${currentInput}\n\n[Contexto web: ${currentUrl}]`
+                                : `[Contexto web: ${currentUrl}]\n`;
+                            globalStore.set(aiModel.inputAtom, urlContext);
+                        } catch (e) {
+                            console.warn("No se pudo enviar al chat de IA:", e);
+                        }
+                    }
+                },
+            });
+
+            // Botón "Anclar página" (Pin)
+            buttons.push({
+                elemtype: "iconbutton",
+                icon: "thumbtack",
+                title: "Anclar esta página como homepage del bloque",
+                click: () => {
+                    fireAndForget(() => this.setHomepageUrl(this.getUrl(), "block"));
+                },
+            });
+
+            // ⭐ Botón "Marcadores / Favoritos"
+            buttons.push({
+                elemtype: "iconbutton",
+                icon: "star",
+                title: "Marcadores / Favoritos",
+                click: () => {
+                    const isOpen = globalStore.get(this.isBookmarksOpen);
+                    globalStore.set(this.isBookmarksOpen, !isOpen);
+                },
+            });
+
+            // 📖 Botón "Modo Lector"
+            buttons.push({
+                elemtype: "iconbutton",
+                icon: "book-open",
+                title: "Modo Lector (Reader Mode)",
+                click: () => this.toggleReaderMode(),
+            });
+
+            // 📥 Botón "Descargas"
+            buttons.push({
+                elemtype: "iconbutton",
+                icon: "download",
+                title: "Gestor de Descargas",
+                click: () => {
+                    const isOpen = globalStore.get(this.isDownloadsOpen);
+                    globalStore.set(this.isDownloadsOpen, !isOpen);
+                },
+            });
+
+            // ⚡ Botón "Paleta de Comandos" (Cmd+K)
+            buttons.push({
+                elemtype: "iconbutton",
+                icon: "wand-magic-sparkles",
+                title: "Paleta de Comandos (Cmd+K)",
+                click: () => {
+                    const isOpen = globalStore.get(this.isCommandPaletteOpen);
+                    globalStore.set(this.isCommandPaletteOpen, !isOpen);
                 },
             });
 
@@ -380,6 +518,34 @@ export class WebViewModel implements ViewModel {
         if (this.searchAtoms) {
             globalStore.set(this.searchAtoms.isOpen, false);
         }
+
+        // Registrar en el historial de navegación (#3)
+        if (url && !url.startsWith("data:") && !url.startsWith("about:")) {
+            const currentHistory = globalStore.get(this.historyList);
+            const title = this.webviewRef.current?.getTitle?.() || url;
+            const existingIdx = currentHistory.findIndex((h) => h.url === url);
+            let newHistory: HistoryEntry[];
+            if (existingIdx >= 0) {
+                newHistory = [...currentHistory];
+                newHistory[existingIdx] = {
+                    ...newHistory[existingIdx],
+                    visitedAt: Date.now(),
+                    visitCount: (newHistory[existingIdx].visitCount || 1) + 1,
+                    title: title || newHistory[existingIdx].title,
+                };
+            } else {
+                newHistory = [{ url, title, visitedAt: Date.now(), visitCount: 1 }, ...currentHistory].slice(0, 200);
+            }
+            globalStore.set(this.historyList, newHistory);
+        }
+
+        // Actualizar la pestaña activa (#1)
+        const tabs = globalStore.get(this.tabsList);
+        const activeId = globalStore.get(this.activeTabId);
+        const updatedTabs = tabs.map((t) =>
+            t.id === activeId ? { ...t, url, title: this.webviewRef.current?.getTitle?.() || url } : t
+        );
+        globalStore.set(this.tabsList, updatedTabs);
     }
 
     async handleOpenLocalFile() {
@@ -612,6 +778,247 @@ export class WebViewModel implements ViewModel {
         }
     }
 
+    // Q1 — Barra de progreso de carga
+    setLoadProgress(progress: number) {
+        globalStore.set(this.loadProgress, progress);
+    }
+
+    // Q3 — Leer en Voz Alta (Read Aloud)
+    toggleReadAloud() {
+        const isActive = globalStore.get(this.readAloudActive);
+        if (isActive) {
+            // Detener lectura
+            fireAndForget(() =>
+                this.webviewRef.current?.executeJavaScript("window.speechSynthesis.cancel(); true;")
+            );
+            globalStore.set(this.readAloudActive, false);
+        } else {
+            // Empezar a leer
+            globalStore.set(this.readAloudActive, true);
+            fireAndForget(() =>
+                this.webviewRef.current
+                    ?.executeJavaScript(
+                        `(function() {
+                            window.speechSynthesis.cancel();
+                            var text = window.getSelection().toString() || document.body.innerText.substring(0, 5000);
+                            var utterance = new SpeechSynthesisUtterance(text);
+                            utterance.lang = document.documentElement.lang || 'es-ES';
+                            utterance.onend = function() {};
+                            window.speechSynthesis.speak(utterance);
+                            return true;
+                        })()`
+                    )
+                    .catch((e) => {
+                        console.error("Read Aloud error:", e);
+                        globalStore.set(this.readAloudActive, false);
+                    })
+            );
+        }
+    }
+
+    // Q5 — Focus Mode (ocultar todo excepto el contenido principal)
+    toggleFocusMode() {
+        const focusModeCSS = `
+            header, footer, nav, aside, .sidebar, .ads, .ad, .advertisement,
+            [class*="banner"], [class*="popup"], [class*="modal"], [id*="cookie"],
+            [class*="cookie"], [class*="newsletter"], [class*="subscribe"] {
+                display: none !important;
+            }
+            body { max-width: 800px !important; margin: 0 auto !important; padding: 20px !important; }
+            article, main, [role="main"] { display: block !important; width: 100% !important; }
+        `;
+        fireAndForget(() =>
+            this.webviewRef.current?.executeJavaScript(
+                `(function() {
+                    var existingStyle = document.getElementById('gulin-focus-mode');
+                    if (existingStyle) {
+                        existingStyle.remove();
+                        return 'off';
+                    }
+                    var style = document.createElement('style');
+                    style.id = 'gulin-focus-mode';
+                    style.textContent = ${JSON.stringify(focusModeCSS)};
+                    document.head.appendChild(style);
+                    return 'on';
+                })()`
+            )
+        );
+    }
+
+    // Q6 — Enviar selección al terminal activo
+    async sendSelectionToTerminal() {
+        try {
+            const selectedText = await this.webviewRef.current?.executeJavaScript(
+                "window.getSelection().toString()"
+            );
+            if (selectedText && selectedText.trim() !== "") {
+                await navigator.clipboard.writeText(selectedText.trim());
+                console.log("Sent selection to clipboard for terminal:", selectedText.trim());
+            }
+        } catch (e) {
+            console.error("Failed to send selection to terminal:", e);
+        }
+    }
+
+    // #8 — Reader Mode
+    toggleReaderMode() {
+        fireAndForget(() => this.webviewRef.current?.executeJavaScript(toggleReaderModeScript()));
+    }
+
+    // Modo Oscuro Forzado
+    toggleForcedDarkMode() {
+        const isForced = globalStore.get(this.isDarkModeForced);
+        const newState = !isForced;
+        globalStore.set(this.isDarkModeForced, newState);
+        const script = newState
+            ? `(function() {
+                var s = document.createElement('style');
+                s.id = 'gulin-forced-dark';
+                s.textContent = 'html { filter: invert(90%) hue-rotate(180deg) !important; background: #121212 !important; } img, video, iframe, canvas { filter: invert(100%) hue-rotate(180deg) !important; }';
+                document.head.appendChild(s);
+            })()`
+            : `(function() {
+                var s = document.getElementById('gulin-forced-dark');
+                if (s) s.remove();
+            })()`;
+        fireAndForget(() => this.webviewRef.current?.executeJavaScript(script));
+    }
+
+    // Adblocker
+    async toggleAdblock() {
+        const current = globalStore.get(this.isAdblockEnabled);
+        const next = !current;
+        globalStore.set(this.isAdblockEnabled, next);
+        await getApi().toggleAdblock(next);
+        this.webviewRef.current?.reload();
+    }
+
+    // Web Clipper -> Markdown
+    async clipPageToMarkdown() {
+        try {
+            const rawJson = await this.webviewRef.current?.executeJavaScript(getClipPageScript());
+            if (rawJson) {
+                const data = JSON.parse(rawJson);
+                const markdown = formatAsMarkdown(data);
+                const fileName = `nota_${Date.now()}.md`;
+                await getApi().saveTextFile(fileName, markdown);
+                alert(`Página guardada exitosamente como ${fileName}`);
+            }
+        } catch (e) {
+            console.error("Error clipping page:", e);
+        }
+    }
+
+    // Picture-in-Picture
+    async triggerPiP() {
+        const wcId = this.webviewRef.current?.getWebContentsId();
+        if (wcId) {
+            await getApi().webviewPip(wcId);
+        }
+    }
+
+    // Tabs Management
+    newTab(url?: string) {
+        const targetUrl = url || "https://google.com";
+        const newTabItem: WebTab = {
+            id: `tab-${Date.now()}`,
+            url: targetUrl,
+            title: "Nueva pestaña",
+        };
+        const currentTabs = globalStore.get(this.tabsList);
+        globalStore.set(this.tabsList, [...currentTabs, newTabItem]);
+        globalStore.set(this.activeTabId, newTabItem.id);
+        this.loadUrl(targetUrl, "new-tab");
+    }
+
+    closeTab(tabId: string) {
+        const currentTabs = globalStore.get(this.tabsList);
+        if (currentTabs.length <= 1) return;
+        const newTabs = currentTabs.filter((t) => t.id !== tabId);
+        globalStore.set(this.tabsList, newTabs);
+        const activeId = globalStore.get(this.activeTabId);
+        if (activeId === tabId) {
+            const nextTab = newTabs[newTabs.length - 1];
+            globalStore.set(this.activeTabId, nextTab.id);
+            if (nextTab.url) this.loadUrl(nextTab.url, "tab-switch");
+        }
+    }
+
+    selectTab(tabId: string) {
+        const currentTabs = globalStore.get(this.tabsList);
+        const target = currentTabs.find((t) => t.id === tabId);
+        if (target) {
+            globalStore.set(this.activeTabId, tabId);
+            if (target.url && target.url !== this.getUrl()) {
+                this.loadUrl(target.url, "tab-select");
+            }
+        }
+    }
+
+    // Bookmarks Management
+    addBookmark(bookmark: Omit<BookmarkItem, "id" | "createdAt">) {
+        const newItem: BookmarkItem = {
+            ...bookmark,
+            id: `bm-${Date.now()}`,
+            createdAt: Date.now(),
+        };
+        const current = globalStore.get(this.bookmarksList);
+        globalStore.set(this.bookmarksList, [newItem, ...current]);
+    }
+
+    removeBookmark(id: string) {
+        const current = globalStore.get(this.bookmarksList);
+        globalStore.set(this.bookmarksList, current.filter((b) => b.id !== id));
+    }
+
+    // Reading List Management
+    addToReadingList() {
+        const url = this.getUrl();
+        const title = this.webviewRef.current?.getTitle?.() || url;
+        const newItem: ReadingListItem = {
+            id: `rl-${Date.now()}`,
+            url,
+            title,
+            savedAt: Date.now(),
+            isRead: false,
+        };
+        const current = globalStore.get(this.readingList);
+        globalStore.set(this.readingList, [newItem, ...current]);
+        alert("Artículo guardado en la Lista de Lectura 📚");
+    }
+
+    // Browser Agent Tool Executor (llamado por la IA)
+    async runAgentTool(toolName: string, params: any): Promise<any> {
+        globalStore.set(this.isBrowserAgentActive, true);
+        globalStore.set(this.browserAgentAction, `${toolName}: ${JSON.stringify(params || {})}`);
+        try {
+            const result = await executeBrowserAgentTool(toolName, params, this);
+            return result;
+        } finally {
+            setTimeout(() => {
+                globalStore.set(this.isBrowserAgentActive, false);
+                globalStore.set(this.browserAgentAction, "");
+            }, 1000);
+        }
+    }
+
+    async refreshWebMcpTools(): Promise<void> {
+        try {
+            const wcId = this.webviewRef.current?.getWebContentsId?.();
+            if (!wcId) return;
+            const tools = await getApi().webmcpGetTools(wcId);
+            globalStore.set(this.webmcpTools, Array.isArray(tools) ? tools : []);
+        } catch (e) {
+            console.debug("WebMCP tools fetch error:", e);
+        }
+    }
+
+    async executeWebMcpTool(toolName: string, params: any): Promise<any> {
+        const wcId = this.webviewRef.current?.getWebContentsId?.();
+        if (!wcId) throw new Error("No webview WebContents available");
+        return await getApi().webmcpExecuteTool(wcId, toolName, params);
+    }
+
     keyDownHandler(e: GulinKeyboardEvent): boolean {
         if (checkKeyPressed(e, "Cmd:l")) {
             this.urlInputRef?.current?.focus();
@@ -621,6 +1028,37 @@ export class WebViewModel implements ViewModel {
         if (checkKeyPressed(e, "Cmd:r")) {
             this.webviewRef.current?.reload();
             return true;
+        }
+        if (checkKeyPressed(e, "Cmd:k")) {
+            const cur = globalStore.get(this.isCommandPaletteOpen);
+            globalStore.set(this.isCommandPaletteOpen, !cur);
+            return true;
+        }
+        if (checkKeyPressed(e, "Cmd:Shift:k")) {
+            const cur = globalStore.get(this.isQuickSwitcherOpen);
+            globalStore.set(this.isQuickSwitcherOpen, !cur);
+            return true;
+        }
+        if (checkKeyPressed(e, "Cmd:y")) {
+            const cur = globalStore.get(this.isHistoryOpen);
+            globalStore.set(this.isHistoryOpen, !cur);
+            return true;
+        }
+        if (checkKeyPressed(e, "Cmd:Shift:r")) {
+            this.toggleReaderMode();
+            return true;
+        }
+        if (checkKeyPressed(e, "Cmd:t")) {
+            this.newTab();
+            return true;
+        }
+        if (checkKeyPressed(e, "Cmd:w")) {
+            const tabs = globalStore.get(this.tabsList);
+            if (tabs.length > 1) {
+                const activeId = globalStore.get(this.activeTabId);
+                this.closeTab(activeId);
+                return true;
+            }
         }
         if (checkKeyPressed(e, "Cmd:ArrowLeft")) {
             this.handleBack(null);
@@ -751,12 +1189,83 @@ export class WebViewModel implements ViewModel {
                 click: () => this.copyUrlToClipboard(),
             },
             {
-                label: "Set Block Homepage",
-                click: () => fireAndForget(() => this.setHomepageUrl(this.getUrl(), "block")),
+                label: "Enviar URL al Chat de IA",
+                click: () => {
+                    const currentUrl = this.getUrl();
+                    if (currentUrl) {
+                        try {
+                            const aiModel = GulinAIModel.getInstance();
+                            globalStore.set(aiModel.inputAtom, `[Contexto web: ${currentUrl}]\n`);
+                        } catch (e) {
+                            console.warn("No se pudo enviar al chat de IA:", e);
+                        }
+                    }
+                },
             },
             {
-                label: "Set Default Homepage",
-                click: () => fireAndForget(() => this.setHomepageUrl(this.getUrl(), "global")),
+                label: "Enviar selección al Terminal",
+                click: () => fireAndForget(() => this.sendSelectionToTerminal()),
+            },
+            {
+                label: "⚡ Paleta de Comandos (Cmd+K)",
+                click: () => {
+                    const isOpen = globalStore.get(this.isCommandPaletteOpen);
+                    globalStore.set(this.isCommandPaletteOpen, !isOpen);
+                },
+            },
+            {
+                label: "📖 Modo Lector (Reader Mode)",
+                click: () => this.toggleReaderMode(),
+            },
+            {
+                label: "🌙 Modo Oscuro Forzado",
+                click: () => this.toggleForcedDarkMode(),
+            },
+            {
+                label: "🚫 Bloqueador de Anuncios",
+                type: "checkbox",
+                checked: globalStore.get(this.isAdblockEnabled),
+                click: () => fireAndForget(() => this.toggleAdblock()),
+            },
+            {
+                label: "📝 Guardar página como Nota Markdown",
+                click: () => fireAndForget(() => this.clipPageToMarkdown()),
+            },
+            {
+                label: "📚 Guardar en Lista de Lectura",
+                click: () => this.addToReadingList(),
+            },
+            {
+                label: "📺 Picture-in-Picture (Video)",
+                click: () => fireAndForget(() => this.triggerPiP()),
+            },
+            {
+                label: "🗂️ Nueva Pestaña Interna",
+                click: () => this.newTab(),
+            },
+            {
+                type: "separator",
+            },
+            {
+                label: "⭐ Ver Marcadores / Favoritos",
+                click: () => {
+                    const isOpen = globalStore.get(this.isBookmarksOpen);
+                    globalStore.set(this.isBookmarksOpen, !isOpen);
+                },
+            },
+            {
+                label: "🕒 Ver Historial de Navegación",
+                click: () => {
+                    const isOpen = globalStore.get(this.isHistoryOpen);
+                    globalStore.set(this.isHistoryOpen, !isOpen);
+                },
+            },
+            {
+                label: "📥 Ver Descargas",
+                click: () => {
+                    const isOpen = globalStore.get(this.isDownloadsOpen);
+                    globalStore.set(this.isDownloadsOpen, !isOpen);
+                },
             },
             {
                 type: "separator",
@@ -892,11 +1401,11 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
     const zoomFactor = isMagnified ? baseZoomFactor * 1.3 : baseZoomFactor;
     const partitionOverride = useAtomValueSafe(model.partitionOverride);
     const metaPartition = useAtomValue(getBlockMetaKeyAtom(model.blockId, "web:partition"));
-    const webPartition = partitionOverride || metaPartition || undefined;
+    const webPartition = partitionOverride || metaPartition || "persist:gulin-web";
     const userAgentType = useAtomValue(model.userAgentType) || "default";
 
-    // Determine user agent string based on type
-    let userAgent: string | undefined = undefined;
+    // Determine user agent string based on type (genuine Chrome avoids anti-bot CAPTCHA)
+    let userAgent: string = USER_AGENT_DESKTOP;
     if (userAgentType === "mobile:iphone") {
         userAgent = USER_AGENT_IPHONE;
     } else if (userAgentType === "mobile:android") {
@@ -1026,18 +1535,14 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
     // Reload webview when user agent type changes
     useEffect(() => {
         if (prevUserAgentTypeRef.current !== userAgentType && domReady && model.webviewRef.current) {
-            let newUserAgent: string | undefined = undefined;
+            let newUserAgent: string = USER_AGENT_DESKTOP;
             if (userAgentType === "mobile:iphone") {
                 newUserAgent = USER_AGENT_IPHONE;
             } else if (userAgentType === "mobile:android") {
                 newUserAgent = USER_AGENT_ANDROID;
             }
 
-            if (newUserAgent) {
-                model.webviewRef.current.setUserAgent(newUserAgent);
-            } else {
-                model.webviewRef.current.setUserAgent("");
-            }
+            model.webviewRef.current.setUserAgent(newUserAgent);
             model.webviewRef.current.reload();
         }
         prevUserAgentTypeRef.current = userAgentType;
@@ -1062,12 +1567,25 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
         const startLoadingHandler = () => {
             model.setRefreshIcon("xmark-large");
             model.setIsLoading(true);
+            model.setLoadProgress(10);
             webview.style.backgroundColor = "transparent";
+            // Simular progreso gradual hasta 90% mientras carga
+            let progress = 10;
+            const interval = setInterval(() => {
+                progress = Math.min(progress + Math.random() * 15, 90);
+                model.setLoadProgress(Math.round(progress));
+            }, 400);
+            (webview as any)._progressInterval = interval;
         };
         const stopLoadingHandler = () => {
             model.setRefreshIcon("rotate-right");
             model.setIsLoading(false);
+            // Completar la barra de progreso y luego ocultarla
+            model.setLoadProgress(100);
+            clearInterval((webview as any)._progressInterval);
+            setTimeout(() => model.setLoadProgress(0), 400);
             setBgColor();
+            model.refreshWebMcpTools();
         };
         const failLoadHandler = (e: any) => {
             if (e.errorCode === -3) {
@@ -1092,6 +1610,11 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
         const handleDomReady = () => {
             globalStore.set(model.domReady, true);
             setBgColor();
+            const wcId = webview.getWebContentsId?.();
+            if (wcId) {
+                getApi().enableWebviewDownloads?.(wcId);
+                model.refreshWebMcpTools();
+            }
         };
         const handleMediaPlaying = () => {
             model.setMediaPlaying(true);
@@ -1099,6 +1622,38 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
         const handleMediaPaused = () => {
             model.setMediaPlaying(false);
         };
+
+        // Listen for download IPC events (inside useEffect so we can properly clean up)
+        const handleDownloadStarted = (_: any, dl: any) => {
+            const current = globalStore.get(model.downloadsList);
+            globalStore.set(model.downloadsList, [dl, ...current]);
+            globalStore.set(model.isDownloadsOpen, true);
+        };
+        const handleDownloadUpdated = (_: any, dl: any) => {
+            const current = globalStore.get(model.downloadsList);
+            globalStore.set(
+                model.downloadsList,
+                current.map((item) => (item.id === dl.id ? { ...item, ...dl } : item))
+            );
+        };
+        const handleDownloadDone = (_: any, dl: any) => {
+            const current = globalStore.get(model.downloadsList);
+            globalStore.set(
+                model.downloadsList,
+                current.map((item) => (item.id === dl.id ? { ...item, ...dl } : item))
+            );
+        };
+        const ipcRenderer = (window as any).__ipcRenderer || (getApi() as any)._ipcRenderer;
+        if (ipcRenderer) {
+            ipcRenderer.on("download-started", handleDownloadStarted);
+            ipcRenderer.on("download-updated", handleDownloadUpdated);
+            ipcRenderer.on("download-done", handleDownloadDone);
+        } else {
+            // Fallback: register via getApi() wrappers (no cleanup possible, but acceptable)
+            getApi().onDownloadStarted?.((dl: any) => handleDownloadStarted(null, dl));
+            getApi().onDownloadUpdated?.((dl: any) => handleDownloadUpdated(null, dl));
+            getApi().onDownloadDone?.((dl: any) => handleDownloadDone(null, dl));
+        }
 
         webview.addEventListener("did-frame-navigate", navigateListener);
         webview.addEventListener("did-navigate-in-page", navigateListener);
@@ -1129,8 +1684,19 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
             webview.removeEventListener("media-started-playing", handleMediaPlaying);
             webview.removeEventListener("media-paused", handleMediaPaused);
             webview.removeEventListener("found-in-page", onFoundInPage);
+            if (ipcRenderer) {
+                ipcRenderer.removeListener("download-started", handleDownloadStarted);
+                ipcRenderer.removeListener("download-updated", handleDownloadUpdated);
+                ipcRenderer.removeListener("download-done", handleDownloadDone);
+            }
         };
     }, []);
+
+        // Bug fix: use reactive hooks so panels update when atoms change (no globalStore.get in JSX)
+        const tabsList = useAtomValue(model.tabsList);
+        const bookmarksList = useAtomValue(model.bookmarksList);
+        const historyList = useAtomValue(model.historyList);
+        const currentUrl = useAtomValue(model.url) || metaUrl;
 
         const handleDragOver = (e: React.DragEvent) => {
             e.preventDefault();
@@ -1153,29 +1719,172 @@ const WebView = memo(({ model, onFailLoad, blockRef, initialSrc }: WebViewProps)
         };
 
         return (
-            <div className="webview-container relative h-full w-full" onDragOver={handleDragOver} onDrop={handleDrop}>
-                <webview
-                    id="webview"
-                    className="webview"
-                    ref={model.webviewRef}
-                    src={metaUrlInitial}
-                    data-blockid={model.blockId}
-                    data-webcontentsid={webContentsId} // needed for emain
-                    preload={getWebviewPreloadUrl()}
-                    // @ts-expect-error This is a discrepancy between the React typing and the Chromium impl for webviewTag. Chrome webviewTag expects a string, while React expects a boolean.
-                    allowpopups="true"
-                    partition={webPartition}
-                    useragent={userAgent}
+            <div className="webview-container relative h-full w-full flex flex-col" onDragOver={handleDragOver} onDrop={handleDrop}>
+                {/* #1 — Tabs internos dentro del navegador */}
+                <WebviewTabbar
+                    tabsAtom={model.tabsList}
+                    activeTabIdAtom={model.activeTabId}
+                    onSelectTab={(id) => model.selectTab(id)}
+                    onCloseTab={(id) => model.closeTab(id)}
+                    onNewTab={() => model.newTab()}
                 />
-                {errorText && (
-                    <div className="webview-error">
-                        <div>{errorText}</div>
-                    </div>
-                )}
-                <Search {...searchProps} />
-                <BookmarkTypeahead model={model} blockRef={blockRef} />
+
+                <div className="relative flex-1 w-full h-full overflow-hidden">
+                    {/* Q1 — Barra de progreso de carga */}
+                    <WebviewProgressBar model={model} />
+
+                    <webview
+                        id="webview"
+                        className="webview"
+                        ref={model.webviewRef}
+                        src={metaUrlInitial}
+                        data-blockid={model.blockId}
+                        data-webcontentsid={webContentsId} // needed for emain
+                        preload={getWebviewPreloadUrl()}
+                        // @ts-expect-error This is a discrepancy between the React typing and the Chromium impl for webviewTag. Chrome webviewTag expects a string, while React expects a boolean.
+                        allowpopups="true"
+                        partition={webPartition}
+                        useragent={userAgent}
+                    />
+
+                    {/* FASE 2.4 — Browser Agent Overlay */}
+                    <BrowserAgentOverlay
+                        isActiveAtom={model.isBrowserAgentActive}
+                        currentActionAtom={model.browserAgentAction}
+                        onStop={() => globalStore.set(model.isBrowserAgentActive, false)}
+                    />
+
+                    {/* W3C WebMCP Standard Badge & Tool Inspector */}
+                    <WebMCPBadge
+                        toolsAtom={model.webmcpTools}
+                        isOpenAtom={model.isWebMcpPopoverOpen}
+                        onExecuteTool={(name, p) => model.executeWebMcpTool(name, p)}
+                    />
+
+                    {/* #10 — Command Palette (Cmd+K) */}
+                    <WebviewCommandPalette
+                        isOpenAtom={model.isCommandPaletteOpen}
+                        currentUrl={metaUrl}
+                        onNavigate={(u) => model.loadUrl(u, "palette")}
+                        onCopyUrl={() => model.copyUrlToClipboard()}
+                        onOpenDevTools={() => model.webviewRef.current?.openDevTools()}
+                        onToggleReaderMode={() => model.toggleReaderMode()}
+                        onToggleFocusMode={() => model.toggleFocusMode()}
+                        onSendToChat={() => {
+                            const u = model.getUrl();
+                            if (u) {
+                                const ai = GulinAIModel.getInstance();
+                                globalStore.set(ai.inputAtom, `[Contexto web: ${u}]\n`);
+                            }
+                        }}
+                        onToggleDarkMode={() => model.toggleForcedDarkMode()}
+                        onToggleAdblock={() => fireAndForget(() => model.toggleAdblock())}
+                        onOpenHistory={() => globalStore.set(model.isHistoryOpen, true)}
+                        onOpenBookmarks={() => globalStore.set(model.isBookmarksOpen, true)}
+                        onOpenDownloads={() => globalStore.set(model.isDownloadsOpen, true)}
+                    />
+
+                    {/* #3 — Panel de Historial (Cmd+Y) */}
+                    <WebHistoryPanel
+                        isOpenAtom={model.isHistoryOpen}
+                        historyAtom={model.historyList}
+                        onNavigate={(u) => model.loadUrl(u, "history")}
+                        onClear={() => globalStore.set(model.historyList, [])}
+                    />
+
+                    {/* #4 — Panel de Marcadores / Favoritos */}
+                    <WebviewBookmarks
+                        isOpenAtom={model.isBookmarksOpen}
+                        bookmarksAtom={model.bookmarksList}
+                        currentUrl={currentUrl}
+                        currentTitle={currentUrl}
+                        onNavigate={(u) => model.loadUrl(u, "bookmark")}
+                        onAdd={(b) => model.addBookmark(b)}
+                        onRemove={(id) => model.removeBookmark(id)}
+                    />
+
+                    {/* #11 — Lista de Lectura (Reading List) */}
+                    <ReadingList
+                        isOpenAtom={model.isReadingListOpen}
+                        itemsAtom={model.readingList}
+                        onNavigate={(u) => model.loadUrl(u, "reading-list")}
+                        onToggleRead={(id) => {
+                            const list = globalStore.get(model.readingList);
+                            globalStore.set(
+                                model.readingList,
+                                list.map((x) => (x.id === id ? { ...x, isRead: !x.isRead } : x))
+                            );
+                        }}
+                        onRemove={(id) => {
+                            const list = globalStore.get(model.readingList);
+                            globalStore.set(model.readingList, list.filter((x) => x.id !== id));
+                        }}
+                    />
+
+                    {/* #2 — Gestor de Descargas (Download Manager) */}
+                    <DownloadManager
+                        isOpenAtom={model.isDownloadsOpen}
+                        downloadsAtom={model.downloadsList}
+                        onOpenFile={(p) => getApi().openDownloadFile(p)}
+                        onShowInFinder={(p) => getApi().showDownloadInFinder(p)}
+                        onClearCompleted={() => {
+                            const list = globalStore.get(model.downloadsList);
+                            globalStore.set(
+                                model.downloadsList,
+                                list.filter((d) => d.state !== "completed")
+                            );
+                        }}
+                    />
+
+                    {/* Q15 — Quick Switcher (Cmd+Shift+K) — usa atoms reactivos */}
+                    <WebviewQuickSwitcher
+                        isOpenAtom={model.isQuickSwitcherOpen}
+                        items={[
+                            ...tabsList.map((t) => ({
+                                type: "tab" as const,
+                                id: t.id,
+                                url: t.url,
+                                title: t.title,
+                            })),
+                            ...bookmarksList.map((b) => ({
+                                type: "bookmark" as const,
+                                id: b.id,
+                                url: b.url,
+                                title: b.title,
+                            })),
+                            ...historyList.slice(0, 15).map((h) => ({
+                                type: "history" as const,
+                                id: h.url,
+                                url: h.url,
+                                title: h.title,
+                            })),
+                        ]}
+                        onSelect={(item) => model.loadUrl(item.url, "switcher")}
+                    />
+
+                    {errorText && (
+                        <div className="webview-error">
+                            <div>{errorText}</div>
+                        </div>
+                    )}
+                    <Search {...searchProps} />
+                    <BookmarkTypeahead model={model} blockRef={blockRef} />
+                </div>
             </div>
         );
 });
+
+// Q1 — Componente de la barra de progreso de carga
+const WebviewProgressBar = memo(({ model }: { model: WebViewModel }) => {
+    const loadProgress = useAtomValue(model.loadProgress);
+    if (loadProgress <= 0 || loadProgress >= 100) return null;
+    return (
+        <div
+            className="webview-progress-bar"
+            style={{ width: `${loadProgress}%` }}
+        />
+    );
+});
+WebviewProgressBar.displayName = "WebviewProgressBar";
 
 export { WebView };
