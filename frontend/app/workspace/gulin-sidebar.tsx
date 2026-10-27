@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect, useMemo } from "react";
-import { createBlock } from "@/store/global";
+import { createBlock, atoms } from "@/store/global";
 import { WindowService } from "@/app/store/services";
 import { useAtomValue, useAtom } from "jotai";
 import { GulinAIModel } from "@/app/aipanel/gulinai-model";
 import { WorkspaceLayoutModel } from "@/app/workspace/workspace-layout-model";
+import { RpcApi } from "@/app/store/wshclientapi";
+import { TabRpcClient } from "@/app/store/wshrpcutil";
+import { GulinBridgeModal } from "@/app/modals/gulinbridge-modal";
 
 interface SidebarItem {
     id: string;
@@ -72,10 +75,35 @@ export const GulinSidebar = () => {
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [activeId, setActiveId] = useState<string>("chat_main");
     
-    // Estado de selección y carpetas colapsadas
+    // Estado de selección y carpetas/secciones colapsadas
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+    const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
     const [isSelectionMode, setIsSelectionMode] = useState(false);
+
+    // Estado y autenticación de Gulin Bridge
+    const settings = useAtomValue(atoms.settingsAtom);
+    const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
+    const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+    const isBridgeEnabled = Boolean(settings?.["gulinbridge:enabled"]);
+    const bridgeEmail = (settings?.["gulinbridge:email"] as string) || "";
+    const bridgeUserInitials = bridgeEmail ? bridgeEmail[0].toUpperCase() : "G";
+    const bridgeUserName = bridgeEmail ? bridgeEmail.split("@")[0] : "Invitado";
+
+    const handleLogout = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (window.confirm("¿Estás seguro de que deseas cerrar sesión en Gulin Bridge?")) {
+            setIsLoggingOut(true);
+            try {
+                await RpcApi.GulinBridgeLogoutCommand(TabRpcClient);
+            } catch (err: any) {
+                alert("Error al cerrar sesión: " + (err?.message || err));
+            } finally {
+                setIsLoggingOut(false);
+            }
+        }
+    };
 
     // Modelo de IA e historial de chats reales de GuLiN
     const model = GulinAIModel.getInstance();
@@ -154,6 +182,10 @@ export const GulinSidebar = () => {
         setCollapsedFolders(prev => ({ ...prev, [folderName]: !prev[folderName] }));
     };
 
+    const toggleSection = (sectionTitle: string) => {
+        setCollapsedSections(prev => ({ ...prev, [sectionTitle]: !prev[sectionTitle] }));
+    };
+
     // Agrupación tipo Explorer por fecha
     const groupedChats = useMemo(() => {
         const now = Date.now();
@@ -208,6 +240,15 @@ export const GulinSidebar = () => {
                 { id: "secrets", label: "Secrets", icon: "fa-key", view: "gulinconfig" },
                 { id: "mcp_servers", label: "MCP Servers", icon: "fa-plug", view: "tools-admin" },
                 { id: "model_registry", label: "Model Registry", icon: "fa-cubes", view: "gulinconfig" },
+            ]
+        },
+        {
+            title: "Ops & Automation",
+            items: [
+                { id: "fleet_monitoring", label: "Fleet Monitoring", icon: "fa-server", view: "fleet-monitor", badge: "NEW" },
+                { id: "scheduler_jobs", label: "Scheduler & Jobs", icon: "fa-calendar-days", view: "cron-view" },
+                { id: "visual_workflows", label: "Visual Workflows", icon: "fa-route", view: "workflow-canvas", badge: "NEW" },
+                { id: "incidents_alerts", label: "Incidents & Alerts", icon: "fa-triangle-exclamation", view: "alerts-view" },
             ]
         },
         {
@@ -395,59 +436,137 @@ export const GulinSidebar = () => {
                 )}
 
                 {/* Secciones del Menú Enterprise */}
-                {sections.map((section, idx) => (
-                    <div key={idx} className="space-y-1">
-                        {!isCollapsed && (
-                            <div className="px-2 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">
-                                {section.title}
-                            </div>
-                        )}
-                        {section.items.map((item) => {
-                            const isActive = activeId === item.id;
-                            return (
+                {sections.map((section, idx) => {
+                    const isSectionCollapsed = !!collapsedSections[section.title];
+                    return (
+                        <div key={idx} className="space-y-1">
+                            {!isCollapsed ? (
                                 <button
-                                    key={item.id}
-                                    onClick={() => handleItemClick(item)}
-                                    className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-xs font-medium transition-all ${
-                                        isActive 
-                                            ? "bg-accent-500/15 text-accent-300 border border-accent-500/30 shadow-sm" 
-                                            : "text-zinc-400 hover:text-zinc-200 hover:bg-white/5"
-                                    }`}
-                                    title={isCollapsed ? item.label : undefined}
+                                    onClick={() => toggleSection(section.title)}
+                                    className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-semibold text-zinc-500 hover:text-zinc-300 uppercase tracking-wider rounded-md hover:bg-white/5 transition-colors cursor-pointer group select-none"
                                 >
-                                    <i className={`fa-solid ${item.icon} text-sm ${isActive ? "text-accent-400" : "text-zinc-400"}`}></i>
-                                    {!isCollapsed && (
-                                        <span className="flex-1 text-left truncate">{item.label}</span>
-                                    )}
-                                    {!isCollapsed && item.badge && (
-                                        <span className="px-1.5 py-0.5 text-[9px] font-bold bg-accent-500/20 text-accent-300 border border-accent-500/40 rounded-full">
-                                            {item.badge}
-                                        </span>
-                                    )}
+                                    <span className="group-hover:text-zinc-300 transition-colors">{section.title}</span>
+                                    <i className={`fa-solid ${isSectionCollapsed ? "fa-chevron-right text-zinc-600" : "fa-chevron-down text-zinc-500"} text-[9px] transition-transform duration-200`}></i>
                                 </button>
-                            );
-                        })}
-                    </div>
-                ))}
+                            ) : (
+                                <div className="h-[1px] bg-white/10 my-2 mx-1" />
+                            )}
+                            {(!isSectionCollapsed || isCollapsed) && (
+                                <div className="space-y-0.5">
+                                    {section.items.map((item) => {
+                                        const isActive = activeId === item.id;
+                                        return (
+                                            <button
+                                                key={item.id}
+                                                onClick={() => handleItemClick(item)}
+                                                className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                                                    isActive 
+                                                        ? "bg-accent-500/15 text-accent-300 border border-accent-500/30 shadow-sm" 
+                                                        : "text-zinc-400 hover:text-zinc-200 hover:bg-white/5"
+                                                }`}
+                                                title={isCollapsed ? item.label : undefined}
+                                            >
+                                                <i className={`fa-solid ${item.icon} text-sm ${isActive ? "text-accent-400" : "text-zinc-400"}`}></i>
+                                                {!isCollapsed && (
+                                                    <span className="flex-1 text-left truncate">{item.label}</span>
+                                                )}
+                                                {!isCollapsed && item.badge && (
+                                                    <span className="px-1.5 py-0.5 text-[9px] font-bold bg-accent-500/20 text-accent-300 border border-accent-500/40 rounded-full">
+                                                        {item.badge}
+                                                    </span>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
 
-            {/* Footer con Usuario */}
-            {!isCollapsed && (
-                <div className="p-3 border-t border-white/5 bg-zinc-950/40 flex items-center justify-between">
-                    <div className="flex items-center gap-2 overflow-hidden">
-                        <div className="w-7 h-7 rounded-full bg-accent-500/20 border border-accent-500/40 flex items-center justify-center text-xs font-bold text-accent-400">
-                            E
+            {/* Footer con Usuario / Gulin Bridge */}
+            {!isCollapsed ? (
+                isBridgeEnabled && bridgeEmail ? (
+                    <div 
+                        className="p-3 border-t border-white/5 bg-zinc-950/60 flex items-center justify-between group/user hover:bg-zinc-900/60 transition-colors cursor-pointer"
+                        onClick={() => setIsBridgeModalOpen(true)}
+                        title="Gestionar cuenta de Gulin Bridge"
+                    >
+                        <div className="flex items-center gap-2.5 overflow-hidden">
+                            <div className="relative shrink-0">
+                                <div className="w-8 h-8 rounded-full bg-accent-500/20 border border-accent-500/40 flex items-center justify-center text-xs font-bold text-accent-400 shadow-sm">
+                                    {bridgeUserInitials}
+                                </div>
+                                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-zinc-950" title="Bridge Conectado" />
+                            </div>
+                            <div className="flex flex-col truncate">
+                                <div className="flex items-center gap-1.5 truncate">
+                                    <span className="text-xs font-semibold text-zinc-200 truncate capitalize">{bridgeUserName}</span>
+                                    <span className="text-[9px] px-1 py-0.2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded font-medium">Bridge</span>
+                                </div>
+                                <span className="text-[10px] text-zinc-400 truncate">{bridgeEmail}</span>
+                            </div>
                         </div>
-                        <div className="flex flex-col truncate">
-                            <span className="text-xs font-semibold text-zinc-200 truncate">Empresa GuLiN</span>
-                            <span className="text-[10px] text-zinc-500 truncate">contacto@ecogulin.cl</span>
-                        </div>
+                        <button 
+                            onClick={handleLogout}
+                            disabled={isLoggingOut}
+                            className="text-zinc-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors cursor-pointer" 
+                            title="Cerrar Sesión de Gulin Bridge"
+                        >
+                            <i className={`fa-solid ${isLoggingOut ? "fa-spinner-third fa-spin" : "fa-right-from-bracket"} text-xs`}></i>
+                        </button>
                     </div>
-                    <button className="text-zinc-400 hover:text-red-400 p-1 transition-colors" title="Cerrar Sesión">
-                        <i className="fa-solid fa-right-from-bracket text-xs"></i>
-                    </button>
+                ) : (
+                    <div 
+                        onClick={() => setIsBridgeModalOpen(true)}
+                        className="p-3 border-t border-white/5 bg-zinc-950/60 flex items-center justify-between hover:bg-accent-500/10 transition-all cursor-pointer group/login"
+                        title="Hacer clic para iniciar sesión en Gulin Bridge"
+                    >
+                        <div className="flex items-center gap-2.5 overflow-hidden">
+                            <div className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-400 group-hover/login:border-accent-500/50 group-hover/login:text-accent-400 group-hover/login:bg-accent-500/20 transition-all shrink-0">
+                                <i className="fa-solid fa-cloud-bolt text-xs" />
+                            </div>
+                            <div className="flex flex-col truncate">
+                                <span className="text-xs font-semibold text-zinc-300 group-hover/login:text-white transition-colors truncate">Gulin Bridge</span>
+                                <span className="text-[10px] text-accent-400 font-medium truncate">Iniciar Sesión ➜</span>
+                            </div>
+                        </div>
+                        <button 
+                            className="px-2 py-1 bg-accent-500/20 hover:bg-accent-500 text-accent-300 hover:text-white border border-accent-500/40 rounded-lg text-[10px] font-bold transition-all shadow-sm"
+                        >
+                            Login
+                        </button>
+                    </div>
+                )
+            ) : (
+                <div className="p-2 border-t border-white/5 bg-zinc-950/60 flex justify-center">
+                    {isBridgeEnabled && bridgeEmail ? (
+                        <button
+                            onClick={() => setIsBridgeModalOpen(true)}
+                            className="relative w-8 h-8 rounded-full bg-accent-500/20 border border-accent-500/40 flex items-center justify-center text-xs font-bold text-accent-400 hover:scale-105 transition-all cursor-pointer"
+                            title={`Gulin Bridge: ${bridgeEmail}`}
+                        >
+                            {bridgeUserInitials}
+                            <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-emerald-500 border border-zinc-950" />
+                        </button>
+                    ) : (
+                        <button
+                            onClick={() => setIsBridgeModalOpen(true)}
+                            className="w-8 h-8 rounded-xl bg-zinc-800/80 hover:bg-accent-500/20 border border-zinc-700 hover:border-accent-500/40 text-zinc-400 hover:text-accent-400 flex items-center justify-center text-xs transition-all cursor-pointer"
+                            title="Conectar a Gulin Bridge"
+                        >
+                            <i className="fa-solid fa-cloud-bolt text-xs" />
+                        </button>
+                    )}
                 </div>
             )}
+
+            {/* Modal de Conexión y Login de Gulin Bridge */}
+            <GulinBridgeModal 
+                isOpen={isBridgeModalOpen} 
+                onClose={() => setIsBridgeModalOpen(false)} 
+            />
         </aside>
     );
 };
