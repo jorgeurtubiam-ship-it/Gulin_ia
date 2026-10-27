@@ -9,7 +9,8 @@ import Editor from "@monaco-editor/react";
 import { GlobalModel } from "@/app/store/global-model";
 import { renderMiniTable, TableDetailView } from "./dbconn-table";
 import { exportToXLSX, exportToCSV, exportToPDF, copyAsMarkdown } from "./dbconn-export";
-import { createBlock } from "@/store/global";
+import { createBlock, globalStore } from "@/store/global";
+import { WindowService } from "@/app/store/services";
 import type { DBConnectionsViewModel } from "./dbconnections";
 
 // #6: Query History Panel
@@ -94,6 +95,17 @@ export function DBConnectionsView({ model }: { model: DBConnectionsViewModel }) 
     const activeTab = tabs.find(t => t.id === activeTabId);
     const activeResult = activeTabId ? results[activeTabId] : undefined;
 
+    const block = jotai.useAtomValue(model.blockAtom);
+    const [lastProcessedQueryId, setLastProcessedQueryId] = React.useState<string | null>(null);
+
+    React.useEffect(() => {
+        const extQuery = block?.meta?.['db:external-query'] as any;
+        if (extQuery && extQuery.id && extQuery.id !== lastProcessedQueryId) {
+            setLastProcessedQueryId(extQuery.id);
+            model.handleExternalQuery(extQuery);
+        }
+    }, [block?.meta, lastProcessedQueryId, model]);
+
     // Modal state for editing/creating connections
     const [showConnModal, setShowConnModal] = React.useState(false);
     const [editingConn, setEditingConn] = React.useState<string | null>(null);
@@ -109,11 +121,13 @@ export function DBConnectionsView({ model }: { model: DBConnectionsViewModel }) 
         setShowConnModal(true);
     };
 
-    const openEditConnection = (name: string, type: string, host?: string, port?: number) => {
+    const openEditConnection = (name: string, type: string, url?: string) => {
         setEditingConn(name);
         setEditName(name);
         setEditType(type || 'oracle');
-        setEditUrl(`jdbc:${type || 'oracle'}://${host || 'localhost'}:${port || 1521}/${name}`);
+        const existingDb = dbs.find(d => d.name === name);
+        const targetUrl = url || existingDb?.url || '';
+        setEditUrl(targetUrl);
         setShowConnModal(true);
     };
 
@@ -164,7 +178,7 @@ export function DBConnectionsView({ model }: { model: DBConnectionsViewModel }) 
                         </div>
                         <div>
                             <label className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-1.5 block">URL de Conexión</label>
-                            <textarea value={editUrl} onChange={e => setEditUrl(e.target.value)} placeholder={editType === 'oracle' ? 'oracle://user:pass@host:1521/service' : 'postgres://user:pass@host:5432/db'} rows={3} className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-purple-500/50 transition-all resize-none" />
+                            <textarea value={editUrl} onChange={e => setEditUrl(e.target.value)} placeholder={editType === 'oracle' ? 'oracle://user:pass@host:1521/service  (o para OCI: oracle://user:pass@host:1522/service?SSL=true)' : 'postgres://user:pass@host:5432/db'} rows={3} className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-purple-500/50 transition-all resize-none" />
                         </div>
                     </div>
                     <div className="flex items-center justify-end gap-3 mt-8">
@@ -215,7 +229,7 @@ export function DBConnectionsView({ model }: { model: DBConnectionsViewModel }) 
                         </span>
                     </div>
                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all" onClick={e => e.stopPropagation()}>
-                        <button onClick={() => openEditConnection(db.name, db.type, db.host, db.port)} className="flex-1 bg-zinc-800/80 hover:bg-yellow-500/20 text-yellow-400 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 transition-all">
+                        <button onClick={() => openEditConnection(db.name, db.type, db.url)} className="flex-1 bg-zinc-800/80 hover:bg-yellow-500/20 text-yellow-400 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 transition-all">
                             <i className="fa fa-pencil"></i>
                             Editar
                         </button>
@@ -287,41 +301,51 @@ export function DBConnectionsView({ model }: { model: DBConnectionsViewModel }) 
             ? objectKeys.filter(key => key.toLowerCase().includes(schemaSearch.toLowerCase()))
             : objectKeys;
 
+        // Fase 2: estado expandido por categoría (cargado una sola vez en el constructor)
+        const expandedSet = model.getExpandedCategories(selectedConn || '');
+
         return (
             <div className="flex flex-col gap-3">
                 {filteredKeys.map((type) => {
                     const items = typeObjects[type] || [];
                     const count = tables[type] || items.length;
+                    const isExpanded = expandedSet.has(type);
                     return (
                         <div key={type} className="flex flex-col">
-                            <div className="flex items-center gap-2 mb-2">
+                            <button
+                                onClick={() => selectedConn && model.toggleCategory(selectedConn, type)}
+                                className="flex items-center gap-2 mb-2 w-full text-left hover:bg-zinc-800/30 rounded-md px-1.5 py-1 -mx-1.5 transition-colors"
+                            >
+                                <i
+                                    className={`fa fa-chevron-${isExpanded ? 'down' : 'right'} text-[8px] text-zinc-600 transition-transform w-3 text-center`}
+                                ></i>
                                 <i className={`fa ${getTypeIcon(type).split(' ')[0]} text-[10px] ${getTypeIcon(type).split(' ')[1] || 'text-zinc-500'}`}></i>
                                 <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">{type}</span>
                                 <span className="text-[8px] text-zinc-700 font-mono ml-auto">{count}</span>
-                            </div>
-                            <div className="flex flex-col gap-0.5">
-                                {items.map((table: string) => (
-                                    <div
-                                        key={table}
-                                        onClick={() => selectedConn && model.loadTableDetail(selectedConn, table)}
-                                        className="group flex items-center gap-2 px-3 py-1.5 hover:bg-purple-500/10 rounded-lg cursor-pointer transition-all border border-transparent hover:border-purple-500/20"
-                                    >
-                                        <i className={`fa ${getTypeIcon(type)} text-[10px] w-4 text-center`}></i>
-                                        <span className="text-xs text-zinc-300 font-mono group-hover:text-white transition-colors">{table}</span>
-                                        <div className="ml-auto flex items-center gap-1">
-                                            {type === 'TABLE' && (
+                            </button>
+                            {isExpanded && (
+                                <div className="flex flex-col gap-0.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                                    {items.map((table: string) => (
+                                        <div
+                                            key={table}
+                                            onClick={() => selectedConn && model.exploreTable(selectedConn, table)}
+                                            className="group flex items-center gap-2 px-3 py-1.5 hover:bg-purple-500/10 rounded-lg cursor-pointer transition-all border border-transparent hover:border-purple-500/20"
+                                        >
+                                            <i className={`fa ${getTypeIcon(type)} text-[10px] w-4 text-center`}></i>
+                                            <span className="text-xs text-zinc-300 font-mono group-hover:text-white transition-colors">{table}</span>
+                                            <div className="ml-auto flex items-center gap-1">
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); selectedConn && model.exploreTable(selectedConn, table); }}
                                                     className="opacity-0 group-hover:opacity-100 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 p-1.5 rounded-md text-[10px] transition-all"
-                                                    title="Ver registros"
+                                                    title="Ver detalle"
                                                 >
                                                     <i className="fa fa-eye"></i>
                                                 </button>
-                                            )}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
-                            </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     );
                 })}
@@ -399,8 +423,27 @@ export function DBConnectionsView({ model }: { model: DBConnectionsViewModel }) 
                                         </button>
                                     )}
                                 </div>
-                                <button onClick={() => openEditConnection(selectedConn, dbs.find(d => d.name === selectedConn)?.type || '', dbs.find(d => d.name === selectedConn)?.host || '', dbs.find(d => d.name === selectedConn)?.port || 0)} className="size-7 flex items-center justify-center hover:bg-yellow-500/10 rounded-md text-zinc-600 hover:text-yellow-400 transition-all" title="Editar Conexión">
+                                <button onClick={() => {
+                                    const currentDb = dbs.find(d => d.name === selectedConn);
+                                    if (selectedConn) openEditConnection(selectedConn, currentDb?.type || '', currentDb?.url);
+                                }} className="size-7 flex items-center justify-center hover:bg-yellow-500/10 rounded-md text-zinc-600 hover:text-yellow-400 transition-all" title="Editar Conexión">
                                     <i className="fa fa-pencil text-[9px]"></i>
+                                </button>
+                                <button 
+                                    onClick={() => {
+                                        if (selectedConn) {
+                                            WindowService.PopOutBlockDefToNewWindow({
+                                                meta: {
+                                                    view: "db-connections",
+                                                    "db:connection": selectedConn
+                                                }
+                                            });
+                                        }
+                                    }} 
+                                    className="size-7 flex items-center justify-center hover:bg-cyan-500/10 rounded-md text-zinc-600 hover:text-cyan-400 transition-all" 
+                                    title="Expandir a ventana nueva"
+                                >
+                                    <i className="fa fa-external-link text-[9px]"></i>
                                 </button>
                             </div>
                         </div>
@@ -413,7 +456,7 @@ export function DBConnectionsView({ model }: { model: DBConnectionsViewModel }) 
 
                     {/* MAIN AREA: EDITOR & RESULTS */}
                     <Panel className="flex flex-col">
-                        <PanelGroup direction="vertical">
+                        <PanelGroup direction="vertical" autoSaveId="db-conn-vsplit">
                             {/* TOP: SQL EDITOR */}
                             <Panel defaultSize={60} minSize={30} className="flex flex-col bg-[#09090b]">
                                 {/* Tab Bar */}
@@ -736,7 +779,7 @@ export function DBConnectionsView({ model }: { model: DBConnectionsViewModel }) 
                                 </div>
                             </Panel>
 
-                            {!activeTab?.isExternal && (
+                            {activeTab?.type === 'sql' && (
                                 <>
                                     <PanelResizeHandle className="h-[1px] bg-zinc-800 hover:bg-purple-500/50 transition-colors" />
 

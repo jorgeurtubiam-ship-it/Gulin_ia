@@ -500,8 +500,9 @@ func openDBExplorerBlock(ctx context.Context, tabId string, parsed DBQueryInput,
 			ORef: gulinobj.MakeORef("block", existingBlockId),
 			Meta: gulinobj.MetaMapType{
 				"db:external-query": map[string]any{
-					"id":         fmt.Sprintf("ext-%d", time.Now().Unix()),
+					"id":         fmt.Sprintf("ext-%d", time.Now().UnixNano()),
 					"name":       queryLabel,
+					"sql":        queryLabel,
 					"connection": parsed.ConnectionName,
 					"data":       results,
 				},
@@ -518,10 +519,17 @@ func openDBExplorerBlock(ctx context.Context, tabId string, parsed DBQueryInput,
 		TabId: tabId,
 		BlockDef: &gulinobj.BlockDef{
 			Meta: map[string]any{
-				"view":          "db-explorer",
-				"db:title":      fmt.Sprintf("Query: %s", queryLabel),
+				"view":          "db-connections",
+				"db:title":      fmt.Sprintf("DB: %s", parsed.ConnectionName),
 				"db:connection": parsed.ConnectionName,
-				"db:data":       string(dataJson),
+				"db:external-query": map[string]any{
+					"id":         fmt.Sprintf("ext-%d", time.Now().UnixNano()),
+					"name":       queryLabel,
+					"sql":        queryLabel,
+					"connection": parsed.ConnectionName,
+					"data":       results,
+				},
+				"db:data": string(dataJson),
 			},
 		},
 	}, nil)

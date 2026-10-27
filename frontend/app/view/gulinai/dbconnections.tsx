@@ -53,6 +53,9 @@ class DBConnectionsViewModel implements ViewModel {
     ]) as jotai.WritableAtom<{ id: string; name: string; content: string; type: 'sql' | 'table-detail' | 'mongodb'; table?: string, subTab?: string, isExternal?: boolean }[], [any], unknown>;
     activeTabIdAtom = jotai.atom<string>("new-1") as jotai.WritableAtom<string, [string], unknown>;
     resultsAtom = jotai.atom<Record<string, { columns: string[]; rows: any[] } | null>>({}) as jotai.WritableAtom<Record<string, { columns: string[]; rows: any[] } | null>, [any], unknown>;
+
+    // Fase 2: Categorías colapsables del sidebar (Set serializado como string[])
+    expandedCategoriesAtom = jotai.atom<Record<string, string[]>>({}) as jotai.WritableAtom<Record<string, string[]>, [Record<string, string[]>], unknown>;
     executingAtom = jotai.atom<boolean>(false) as jotai.WritableAtom<boolean, [boolean], unknown>;
     errorAtom = jotai.atom<string | null>(null) as jotai.WritableAtom<string | null, [string | null], unknown>;
 
@@ -75,6 +78,7 @@ class DBConnectionsViewModel implements ViewModel {
         this.viewName = jotai.atom<string>("DB Explorer") as jotai.WritableAtom<string, [string], unknown>;
         this.viewText = jotai.atom<string>("DB Explorer") as jotai.WritableAtom<string, [string], unknown>;
         this.loadData();
+        this.loadExpandedCategories();
     }
 
     async loadData() {
@@ -91,6 +95,40 @@ class DBConnectionsViewModel implements ViewModel {
         } finally {
             globalStore.set(this.loadingAtom, false);
         }
+    }
+
+    // Fase 2: Persistencia del estado de categorías colapsables en localStorage
+    getExpandedCategories(connName: string): Set<string> {
+        if (!connName) return new Set();
+        const all = globalStore.get(this.expandedCategoriesAtom) || {};
+        return new Set(all[connName] || []);
+    }
+
+    toggleCategory(connName: string, type: string) {
+        if (!connName || !type) return;
+        const all = globalStore.get(this.expandedCategoriesAtom) || {};
+        const current = new Set(all[connName] || []);
+        if (current.has(type)) {
+            current.delete(type);
+        } else {
+            current.add(type);
+        }
+        const next = { ...all, [connName]: Array.from(current) };
+        globalStore.set(this.expandedCategoriesAtom, next);
+        try {
+            localStorage.setItem('gulin-db-expanded-categories', JSON.stringify(next));
+        } catch (e) { /* localStorage puede no estar disponible */ }
+    }
+
+    loadExpandedCategories() {
+        // Se invoca una sola vez en el constructor del ViewModel.
+        try {
+            const raw = localStorage.getItem('gulin-db-expanded-categories');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                globalStore.set(this.expandedCategoriesAtom, parsed);
+            }
+        } catch (e) { /* ignorar */ }
     }
 
     async selectConnection(connName: string | null) {
@@ -123,46 +161,56 @@ class DBConnectionsViewModel implements ViewModel {
         await this.loadSchemaObjects(connName, null);
     }
 
-    handleExternalQuery(query: { id: string; name: string; connection: string; data: any[] }) {
+    handleExternalQuery(query: { id: string; name: string; sql?: string; connection?: string; data?: any[] }) {
         const tabs = globalStore.get(this.tabsAtom);
-        const newId = `ext-${query.id}`;
+        const querySql = query.sql || query.name || "";
+        const connName = query.connection || "";
+        const newId = `ai-query-${Date.now()}`;
         
-        // Si ya existe un tab con el mismo ID, o con la misma consulta exacta (name), lo reusamos
-        const existingTab = tabs.find(t => t.id === newId || t.name === query.name);
-        
-        if (existingTab) {
-            globalStore.set(this.activeTabIdAtom, existingTab.id);
-            globalStore.set(this.selectedConnAtom, query.connection);
-            globalStore.set(this.resultsAtom, {
-                ...globalStore.get(this.resultsAtom),
-                [existingTab.id]: {
-                    columns: query.data && query.data?.length > 0 ? Object.keys(query.data[0]) : [],
-                    rows: query.data
-                }
-            });
-            return;
+        // Auto-seleccionar la conexión si viene indicada
+        if (connName) {
+            globalStore.set(this.selectedConnAtom, connName);
+            const currentTables = globalStore.get(this.tablesAtom);
+            if (!currentTables || Object.keys(currentTables).length === 0) {
+                this.loadSchemaObjects(connName, null);
+            }
         }
 
+        const tabName = connName ? `${connName}-ai.sql` : `ai-query-${tabs.length + 1}.sql`;
         const newTab = {
             id: newId,
-            name: query.name,
-            content: "-- Consulta desde Chat\n" + query.name,
-            type: 'table-detail' as const,
-            subTab: 'Data',
-            table: query.name,
+            name: tabName,
+            content: querySql,
+            type: 'sql' as const,
             isExternal: true
         };
 
+        const rows = Array.isArray(query.data) ? query.data : [];
+        const columns = rows.length > 0 && rows[0] ? Object.keys(rows[0]) : [];
+
         globalStore.set(this.tabsAtom, [...tabs, newTab]);
         globalStore.set(this.activeTabIdAtom, newId);
-        globalStore.set(this.selectedConnAtom, query.connection);
-        globalStore.set(this.resultsAtom, {
-            ...globalStore.get(this.resultsAtom),
-            [newId]: {
-                columns: query.data && query.data?.length > 0 ? Object.keys(query.data[0]) : [],
-                rows: query.data
-            }
-        });
+        if (rows.length > 0) {
+            globalStore.set(this.resultsAtom, {
+                ...globalStore.get(this.resultsAtom),
+                [newId]: {
+                    columns: columns,
+                    rows: rows
+                }
+            });
+        }
+
+        // Registrar en historial para acceso rápido
+        if (querySql) {
+            const history = globalStore.get(this.historyAtom);
+            globalStore.set(this.historyAtom, [{
+                id: newId,
+                sql: querySql,
+                conn: connName || "default",
+                timestamp: new Date(),
+                rows: rows.length
+            }, ...history].slice(0, 50));
+        }
     }
 
     async loadSchemaObjects(connName: string, owner: string | null) {
