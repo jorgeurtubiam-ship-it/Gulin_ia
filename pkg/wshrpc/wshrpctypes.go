@@ -137,6 +137,8 @@ type WshRpcInterface interface {
 	WebGetTextCommand(ctx context.Context, data CommandWebGetTextData) (string, error)
 	WebClickCommand(ctx context.Context, data CommandWebClickData) error
 	WebTypeCommand(ctx context.Context, data CommandWebTypeData) error
+	WebMCPListCommand(ctx context.Context, data CommandWebMCPListData) (string, error)
+	WebMCPExecuteCommand(ctx context.Context, data CommandWebMCPExecuteData) (string, error)
 	NotifyCommand(ctx context.Context, notificationOptions GulinNotificationOptions) error
 	FocusWindowCommand(ctx context.Context, windowId string) error
 	ElectronEncryptCommand(ctx context.Context, data CommandElectronEncryptData) (*CommandElectronEncryptRtnData, error)
@@ -974,6 +976,20 @@ type CommandWebTypeData struct {
 	TabId       string `json:"tabid"`
 	Selector    string `json:"selector"`
 	Text        string `json:"text"`
+}
+
+type CommandWebMCPListData struct {
+	WorkspaceId string `json:"workspaceid"`
+	BlockId     string `json:"blockid"`
+	TabId       string `json:"tabid"`
+}
+
+type CommandWebMCPExecuteData struct {
+	WorkspaceId string         `json:"workspaceid"`
+	BlockId     string         `json:"blockid"`
+	TabId       string         `json:"tabid"`
+	ToolName    string         `json:"toolname"`
+	Params      map[string]any `json:"params,omitempty"`
 }
 
 type CommandGulinBridgeLoginData struct {

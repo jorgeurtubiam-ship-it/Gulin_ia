@@ -1074,6 +1074,18 @@ func WebGetTextCommand(w *wshutil.WshRpc, data wshrpc.CommandWebGetTextData, opt
 	return resp, err
 }
 
+// command "webmcpexecute", wshserver.WebMCPExecuteCommand
+func WebMCPExecuteCommand(w *wshutil.WshRpc, data wshrpc.CommandWebMCPExecuteData, opts *wshrpc.RpcOpts) (string, error) {
+	resp, err := sendRpcRequestCallHelper[string](w, "webmcpexecute", data, opts)
+	return resp, err
+}
+
+// command "webmcplist", wshserver.WebMCPListCommand
+func WebMCPListCommand(w *wshutil.WshRpc, data wshrpc.CommandWebMCPListData, opts *wshrpc.RpcOpts) (string, error) {
+	resp, err := sendRpcRequestCallHelper[string](w, "webmcplist", data, opts)
+	return resp, err
+}
+
 // command "webselector", wshserver.WebSelectorCommand
 func WebSelectorCommand(w *wshutil.WshRpc, data wshrpc.CommandWebSelectorData, opts *wshrpc.RpcOpts) ([]string, error) {
 	resp, err := sendRpcRequestCallHelper[[]string](w, "webselector", data, opts)

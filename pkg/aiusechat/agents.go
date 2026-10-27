@@ -47,7 +47,7 @@ var Experts = map[AgentExpertType]AgentExpert{
 		ID:               Expert_Web,
 		Name:             "Investigador Web",
 		SystemPromptFunc: GetSystemPrompt_WebExpert,
-		Tools:            []string{"web_navigate", "web_read_page", "web_click", "web_type", "brain_register_node", "brain_connect_nodes"},
+		Tools:            []string{"web_navigate", "web_read_page", "web_click", "web_type", "webmcp_list_tools", "webmcp_call_tool", "brain_register_node", "brain_connect_nodes"},
 		DefaultModel:     "gemini-3.1-flash-lite",
 	},
 	Expert_Command: {

@@ -200,6 +200,8 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 		tools = append(tools, GetWebReadPageToolDefinition(tabid))
 		tools = append(tools, GetWebClickToolDefinition(tabid))
 		tools = append(tools, GetWebTypeToolDefinition(tabid))
+		tools = append(tools, GetWebMCPListToolDefinition(tabid))
+		tools = append(tools, GetWebMCPCallToolDefinition(tabid))
 		viewTypes := make(map[string]bool)
 		for _, block := range blocks {
 			if block.Meta == nil {
@@ -233,6 +235,8 @@ func GenerateTabStateAndTools(ctx context.Context, tabid string, widgetAccess bo
 			tools = append(tools, GetWebReadPageToolDefinition(tabid))
 			tools = append(tools, GetWebClickToolDefinition(tabid))
 			tools = append(tools, GetWebTypeToolDefinition(tabid))
+			tools = append(tools, GetWebMCPListToolDefinition(tabid))
+			tools = append(tools, GetWebMCPCallToolDefinition(tabid))
 		}
 
 		// Herramientas de Gestión y Ejecución de Plugins On-Demand
